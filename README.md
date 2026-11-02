@@ -14,7 +14,9 @@ characters are unchanged. What changed:
 - **Landscape layout.** The screen is 640×172. The pet lives in the left
   200px, and the transcript, approval prompt, info pages, pet stats, menus
   and charging clock fill the panel on the right.
-- **Controls.**
+- **Controls.** On the 3.49B case, BOOT is the button with the
+  backlight/sun icon, PWR is the middle power button, and the third
+  button is RESET (it just reboots the board).
 
   |                  | Normal              | Approval          |
   | ---------------- | ------------------- | ----------------- |
