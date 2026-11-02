@@ -1,5 +1,5 @@
 #include "character.h"
-#include <M5StickCPlus.h>
+#include "hal.h"
 #include <LittleFS.h>
 #include <AnimatedGIF.h>
 #include <ArduinoJson.h>
@@ -50,8 +50,8 @@ static TFT_eSPI*   _tgt = &spr;
 static void gifPlace() {
   int outW = peekMode ? gifW / 2 : gifW;
   int outH = peekMode ? gifH / 2 : gifH;
-  gifX = (spr.width() - outW) / 2;
-  gifY = peekMode ? (PEEK_TOP - outH) / 2 : (140 - outH) / 2;
+  gifX = (PET_PANE_W - outW) / 2;
+  gifY = peekMode ? (PEEK_TOP - outH) / 2 : (SCREEN_H - outH) / 2;
 }
 static uint32_t    nextFrameAt = 0;
 static uint32_t    animPauseUntil = 0;
@@ -125,12 +125,12 @@ static void gifDrawCb(GIFDRAW* d) {
   }
 
   int y = gifY + srcY;
-  if (y < 0 || y >= spr.height()) return;
+  if (y < 0 || y >= SCREEN_H) return;
   int x0 = gifX + d->iX;
   int w  = d->iWidth;
   if (w > 256) w = 256;
   if (x0 < 0) { src -= x0; w += x0; x0 = 0; }
-  if (x0 + w > spr.width()) w = spr.width() - x0;
+  if (x0 + w > PET_PANE_W) w = PET_PANE_W - x0;
   if (w <= 0) return;
   for (int i = 0; i < w; i++) put(x0 + i, y, src[i]);
 }
@@ -343,14 +343,14 @@ void characterTick() {
     // Clear a band around the text, not the whole sprite — keeps overlays
     // like the approval panel and the HUD untouched.
     int cy = peekMode ? 35 : 60;
-    spr.fillRect(0, cy - 14, spr.width(), 28, pal.bg);
+    spr.fillRect(0, cy - 14, PET_PANE_W, 28, pal.bg);
 
     const char* line = ts.frames[textFrame];
     int len = strlen(line);
     int tw = len * 12;                                    // size-2 glyph width
     spr.setTextColor(pal.body, pal.bg);
     spr.setTextSize(2);
-    spr.setCursor((spr.width() - tw) / 2, cy - 8);
+    spr.setCursor((PET_PANE_W - tw) / 2, cy - 8);
     spr.print(line);
 
     textFrame = (textFrame + 1) % ts.nFrames;

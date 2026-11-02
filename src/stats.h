@@ -182,7 +182,7 @@ struct Settings {
   bool wifi;     // placeholder — no WiFi stack linked yet, just stores the pref
   bool led;
   bool hud;
-  uint8_t clockRot;  // 0=auto 1=portrait 2=landscape
+  uint8_t clockRot;  // reused as screen flip: 0=normal 1=flipped 180
 };
 
 static Settings _settings = { true, true, false, true, true, 0 };
@@ -195,7 +195,7 @@ inline void settingsLoad() {
   _settings.led   = _prefs.getBool("s_led", true);
   _settings.hud      = _prefs.getBool("s_hud", true);
   _settings.clockRot = _prefs.getUChar("s_crot", 0);
-  if (_settings.clockRot > 2) _settings.clockRot = 0;
+  if (_settings.clockRot > 1) _settings.clockRot = 0;
   _prefs.end();
 }
 

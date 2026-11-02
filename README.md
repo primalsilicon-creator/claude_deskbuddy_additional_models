@@ -1,3 +1,61 @@
+# claude-desktop-buddy for the Waveshare ESP32-S3-Touch-LCD-3.49
+
+This fork runs the buddy firmware on the **Waveshare ESP32-S3-Touch-LCD-3.49 /
+3.49B, V2 board** (PCB silkscreen `Rev1.1`, or a `V2` sticker on the case)
+instead of the M5StickC Plus. The Bluetooth protocol, pets, stats and GIF
+characters are unchanged. What changed:
+
+- **Hardware layer.** All board code is in `src/hal.h` / `src/hal.cpp`:
+  the AXS15231B 172×640 QSPI panel, TCA9554 expander (LCD reset, backlight
+  enable, power latch), QMI8658 accelerometer, PCF85063 clock, AXS15231B
+  touch, battery ADC, and the BOOT / PWR buttons. The M5StickCPlus library
+  is gone. V1 boards use different backlight and reset pins and will stay
+  dark with this firmware.
+- **Landscape layout.** The screen is 640×172. The pet lives in the left
+  200px, and the transcript, approval prompt, info pages, pet stats, menus
+  and charging clock fill the panel on the right.
+- **Controls.**
+
+  |                  | Normal              | Approval          |
+  | ---------------- | ------------------- | ----------------- |
+  | **BOOT** (A)     | next screen         | **approve**       |
+  | **PWR** (B)      | scroll / next page  | **deny**          |
+  | **Hold BOOT**    | menu                | menu              |
+  | **Hold PWR 3s**  | power off           | power off         |
+  | **Tap pet**      | same as BOOT        |                   |
+  | **Tap panel**    | same as PWR         | tap Approve / Deny buttons |
+
+  On USB power, "power off" puts the board to sleep until BOOT is pressed.
+- **No LED, no buzzer.** "Attention" flashes an orange border around the
+  screen instead (settings → flash). Sound is not wired to the ES8311
+  speaker yet, so the sound setting does nothing for now.
+- **Settings → flip** turns the picture 180° if it comes up upside down
+  in your case.
+- **Battery.** The board only reports battery voltage. It has no current
+  or USB-power sensing, so "on USB" is a guess (battery above 4.15V).
+
+### Flashing this fork
+
+```bash
+pio run -e waveshare-349-v2 -t upload
+```
+
+If the port doesn't show up, hold **BOOT**, tap **RESET** on the back, then
+release BOOT and upload again. `pio device monitor` shows the serial log,
+including touch coordinates and whether the IMU was found.
+
+### Things to check on first boot
+
+- The picture is the right way up (otherwise **settings → flip**).
+- Tapping the pet side counts as BOOT, the panel side as PWR. If taps land
+  on the wrong side, check the `touch:` lines in the serial log.
+- Lying the board **face down** dims it (nap). If it dims when face **up**,
+  change `FACE_DOWN_Z_SIGN` in `src/main.cpp` to `+1.0f`.
+
+The original README for the M5StickC Plus follows.
+
+---
+
 # claude-desktop-buddy
 
 Claude for macOS and Windows can connect Claude Cowork and Claude Code to

@@ -5,7 +5,7 @@ struct Palette {
   uint16_t body, bg, text, textDim, ink;
 };
 
-// Call after M5.begin() and spr.createSprite(). Mounts LittleFS, reads
+// Call after halBegin() and spr.createSprite(). Mounts LittleFS, reads
 // /characters/<name>/manifest.json, parses colors, caches GIF paths.
 bool characterInit(const char* name);
 bool characterLoaded();
