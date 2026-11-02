@@ -133,7 +133,7 @@ Once paired, the bridge auto-reconnects whenever both sides are awake.
 If discovery isn't finding the stick:
 
 - Make sure it's awake (any button press)
-- Check the stick's settings menu → bluetooth is on
+- Check the stick's settings menu → bluetooth is on (the Waveshare build has no such setting; Bluetooth is always on)
 
 ## Controls
 
