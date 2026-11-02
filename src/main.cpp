@@ -821,7 +821,14 @@ void drawHUD() {
   if (tama.connected) {
     spr.printf("sessions %u   running %u   waiting %u", tama.sessionsTotal,
                tama.sessionsRunning, tama.sessionsWaiting);
-    if (tama.nLines) {
+    if (tama.sessionsWaiting > 0) {
+      // The desktop says something is waiting but sent no prompt to answer
+      // here. That happens for sessions it isn't relaying (e.g. ones that
+      // were open before the buddy connected).
+      spr.setTextColor(HOT, p.bg);
+      spr.setCursor(W - 6 * 28, 1);
+      spr.print("approve on desktop");
+    } else if (tama.nLines) {
       spr.setCursor(W - 6 * 12, 1);
       spr.printf("%2u lines", tama.nLines);
     }
