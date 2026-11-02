@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <driver/spi_master.h>
 #include <esp_sleep.h>
+#include <driver/i2s.h>
 
 // ───────────────────────── pins ─────────────────────────
 static const int PIN_LCD_CS   = 9;
@@ -23,10 +24,12 @@ static const uint8_t ADDR_TCA9554 = 0x20;
 static const uint8_t ADDR_RTC     = 0x51;
 static const uint8_t ADDR_IMU     = 0x6B;
 static const uint8_t ADDR_TOUCH   = 0x3B;
+static const uint8_t ADDR_ES8311  = 0x18;
 
 static const uint8_t EXIO_BL_EN   = 1 << 1;
 static const uint8_t EXIO_LCD_RST = 1 << 5;
 static const uint8_t EXIO_SYS_EN  = 1 << 6;
+static const uint8_t EXIO_PA_EN   = 1 << 7;   // speaker amp (NS_MODE in Waveshare's demo)
 
 // Native panel geometry (portrait)
 static const int PANEL_W = 172;
@@ -66,7 +69,7 @@ static void exioBegin() {
   // out the moment the PWR button is released.
   _exioOut = EXIO_SYS_EN | EXIO_LCD_RST;
   i2cWrite1(Wire, ADDR_TCA9554, 0x01, _exioOut);
-  uint8_t outputs = EXIO_BL_EN | EXIO_LCD_RST | EXIO_SYS_EN;
+  uint8_t outputs = EXIO_BL_EN | EXIO_LCD_RST | EXIO_SYS_EN | EXIO_PA_EN;
   i2cWrite1(Wire, ADDR_TCA9554, 0x03, (uint8_t)~outputs);
 }
 
@@ -353,9 +356,127 @@ void halPowerOff() {
   esp_deep_sleep_start();
 }
 
-void halBeep(uint16_t, uint16_t) {
-  // The board has an ES8311 codec and speaker but no simple buzzer.
-  // Sound is not wired up yet.
+// ───────────────────────── ES8311 speaker ─────────────────────────
+// 16kHz, 16-bit stereo over I2S0 with a 4.096MHz MCLK (256 x fs). The
+// register sequence follows Espressif's esp_codec_dev ES8311 driver
+// (open -> 16-bit I2S format -> 16kHz clock coefficients -> start DAC).
+static const int PIN_I2S_MCLK = 7;
+static const int PIN_I2S_BCLK = 15;
+static const int PIN_I2S_WS   = 46;
+static const int PIN_I2S_DOUT = 45;
+static const uint32_t AUDIO_RATE = 16000;
+
+static bool _audioOk = false;
+static QueueHandle_t _beepQ = nullptr;
+struct BeepReq { uint16_t freq, dur; };
+
+static void esW(uint8_t reg, uint8_t v) { i2cWrite1(Wire, ADDR_ES8311, reg, v); }
+static uint8_t esR(uint8_t reg) { uint8_t v = 0; i2cRead(Wire, ADDR_ES8311, reg, &v, 1); return v; }
+
+static bool es8311Begin() {
+  uint8_t id = 0;
+  if (!i2cRead(Wire, ADDR_ES8311, 0xFD, &id, 1)) {
+    Serial.println("audio: ES8311 not found");
+    return false;
+  }
+  // open
+  esW(0x44, 0x08); esW(0x44, 0x08);
+  esW(0x01, 0x30); esW(0x02, 0x00); esW(0x03, 0x10); esW(0x16, 0x24);
+  esW(0x04, 0x10); esW(0x05, 0x00); esW(0x0B, 0x00); esW(0x0C, 0x00);
+  esW(0x10, 0x1F); esW(0x11, 0x7F);
+  esW(0x00, 0x80);                      // slave mode
+  esW(0x01, 0x3F);                      // clock from MCLK pin, not inverted
+  esW(0x06, esR(0x06) & ~0x20);         // SCLK not inverted
+  esW(0x13, 0x10); esW(0x1B, 0x0A); esW(0x1C, 0x6A);
+  esW(0x44, 0x58);
+  // I2S normal format, 16-bit
+  esW(0x09, (esR(0x09) & 0xFC) | 0x0C);
+  esW(0x0A, (esR(0x0A) & 0xFC) | 0x0C);
+  // 16kHz from 4.096MHz MCLK: pre_div 1, x1, adc/dac div 1, single speed,
+  // LRCK 0x00FF, BCLK div 4, ADC OSR 0x10, DAC OSR 0x20
+  esW(0x02, esR(0x02) & 0x07);
+  esW(0x05, 0x00);
+  esW(0x03, (esR(0x03) & 0x80) | 0x10);
+  esW(0x04, (esR(0x04) & 0x80) | 0x20);
+  esW(0x07, esR(0x07) & 0xC0);
+  esW(0x08, 0xFF);
+  esW(0x06, (esR(0x06) & 0xE0) | 0x03);
+  // start, DAC only
+  esW(0x00, 0x80);
+  esW(0x01, 0x3F);
+  esW(0x09, esR(0x09) & ~0x40);         // DAC serial input on
+  esW(0x0A, esR(0x0A) | 0x40);          // ADC serial output off
+  esW(0x17, 0xBF); esW(0x0E, 0x02); esW(0x12, 0x00); esW(0x14, 0x1A);
+  esW(0x0D, 0x01); esW(0x15, 0x40); esW(0x37, 0x08); esW(0x45, 0x00);
+  esW(0x31, 0x00);                      // unmute
+  esW(0x32, 0xBF);                      // DAC volume 0dB
+  return true;
+}
+
+static void beepTask(void*) {
+  static int16_t buf[256 * 2];          // 256 stereo frames
+  BeepReq r;
+  for (;;) {
+    if (xQueueReceive(_beepQ, &r, portMAX_DELAY) != pdTRUE) continue;
+    uint32_t total = (uint32_t)AUDIO_RATE * r.dur / 1000;
+    uint32_t period = r.freq ? AUDIO_RATE / r.freq : 0;
+    const int16_t AMP = 6000;            // about -15dBFS: audible, not harsh
+    uint32_t n = 0;
+    while (n < total) {
+      uint32_t chunk = total - n > 256 ? 256 : total - n;
+      for (uint32_t i = 0; i < chunk; i++, n++) {
+        // Square wave with a 5ms fade in/out so it doesn't click.
+        int16_t s = (period && (n % period) < period / 2) ? AMP : -AMP;
+        uint32_t edge = AUDIO_RATE / 200;
+        if (n < edge) s = s * (int32_t)n / edge;
+        else if (total - n < edge) s = s * (int32_t)(total - n) / edge;
+        buf[i * 2] = buf[i * 2 + 1] = s;
+      }
+      size_t written;
+      i2s_write(I2S_NUM_0, buf, chunk * 4, &written, portMAX_DELAY);
+    }
+  }
+}
+
+static void audioBegin() {
+  i2s_config_t cfg = {};
+  cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
+  cfg.sample_rate = AUDIO_RATE;
+  cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+  cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
+  cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  cfg.intr_alloc_flags = 0;
+  cfg.dma_buf_count = 4;
+  cfg.dma_buf_len = 256;
+  cfg.use_apll = false;
+  cfg.tx_desc_auto_clear = true;        // silence when nothing is queued
+  cfg.mclk_multiple = I2S_MCLK_MULTIPLE_256;
+  if (i2s_driver_install(I2S_NUM_0, &cfg, 0, nullptr) != ESP_OK) {
+    Serial.println("audio: i2s install failed");
+    return;
+  }
+  i2s_pin_config_t pins = {};
+  pins.mck_io_num = PIN_I2S_MCLK;
+  pins.bck_io_num = PIN_I2S_BCLK;
+  pins.ws_io_num = PIN_I2S_WS;
+  pins.data_out_num = PIN_I2S_DOUT;
+  pins.data_in_num = I2S_PIN_NO_CHANGE;
+  i2s_set_pin(I2S_NUM_0, &pins);
+  i2s_zero_dma_buffer(I2S_NUM_0);
+  delay(10);                             // let MCLK settle before the codec
+
+  if (!es8311Begin()) return;
+  exioWrite(EXIO_PA_EN, true);
+  _beepQ = xQueueCreate(8, sizeof(BeepReq));
+  xTaskCreatePinnedToCore(beepTask, "beep", 3072, nullptr, 2, nullptr, 1);
+  _audioOk = true;
+  Serial.println("audio: ES8311 ready");
+}
+
+void halBeep(uint16_t freq, uint16_t durMs) {
+  if (!_audioOk || !durMs) return;
+  BeepReq r = { freq, durMs };
+  xQueueSend(_beepQ, &r, 0);            // drop it if the queue is full
 }
 
 float halTempC() { return temperatureRead(); }
@@ -369,12 +490,15 @@ void halBegin() {
   blBegin();
   lcdBegin();
 
-  BtnA.begin(PIN_BTN_BOOT);
-  BtnB.begin(PIN_BTN_PWR);
+  BtnA.begin(PIN_BTN_PWR);
+  BtnB.begin(PIN_BTN_BOOT);
+  // PWR is usually still held from switching the board on.
+  if (BtnA.isPressed()) BtnA.lockUntilReleased();
   if (BtnB.isPressed()) BtnB.lockUntilReleased();
 
   analogReadResolution(12);
   imuBegin();
+  audioBegin();
 }
 
 void halUpdate() {

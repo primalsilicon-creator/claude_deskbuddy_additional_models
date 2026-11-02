@@ -20,17 +20,20 @@ characters are unchanged. What changed:
 
   |                  | Normal              | Approval          |
   | ---------------- | ------------------- | ----------------- |
-  | **BOOT** (A)     | next screen         | **approve**       |
-  | **PWR** (B)      | scroll / next page  | **deny**          |
-  | **Hold BOOT**    | menu                | menu              |
-  | **Hold PWR 3s**  | power off           | power off         |
-  | **Tap pet**      | same as BOOT        |                   |
-  | **Tap panel**    | same as PWR         | tap Approve / Deny buttons |
+  | **PWR** (A, middle)          | next screen         | **approve**       |
+  | **BOOT** (B, backlight icon) | scroll / next page  | **deny**          |
+  | **Hold PWR**                 | menu                | menu              |
+  | **Hold BOOT 3s**             | power off           | power off         |
+  | **Tap pet**                  | same as PWR         |                   |
+  | **Tap panel**                | same as BOOT        | tap Approve / Deny buttons |
+
+  This matches the M5StickC Plus: the big middle button is A.
 
   On USB power, "power off" puts the board to sleep until BOOT is pressed.
-- **No LED, no buzzer.** "Attention" flashes an orange border around the
-  screen instead (settings → flash). Sound is not wired to the ES8311
-  speaker yet, so the sound setting does nothing for now.
+- **No LED.** "Attention" flashes an orange border around the screen
+  instead (settings → flash).
+- **Sound** plays the original beeps through the ES8311 codec and the
+  onboard speaker (settings → sound).
 - **Settings → flip** turns the picture 180° if it comes up upside down
   in your case.
 - **Battery.** The board only reports battery voltage. It has no current
@@ -49,7 +52,7 @@ including touch coordinates and whether the IMU was found.
 ### Things to check on first boot
 
 - The picture is the right way up (otherwise **settings → flip**).
-- Tapping the pet side counts as BOOT, the panel side as PWR. If taps land
+- Tapping the pet side counts as PWR (A), the panel side as BOOT (B). If taps land
   on the wrong side, check the `touch:` lines in the serial log.
 - Lying the board **face down** dims it (nap). The firmware treats however
   the board is lying at power-on as face up, so boot it face up or standing.

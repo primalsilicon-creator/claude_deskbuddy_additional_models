@@ -11,6 +11,8 @@
 //   I2C0 SDA 47 / SCL 48: TCA9554 0x20, PCF85063 RTC 0x51, QMI8658 IMU 0x6B
 //   I2C1 SDA 17 / SCL 18: AXS15231B touch 0x3B
 //   BOOT button GPIO0, PWR button GPIO16 (both active low)
+//   ES8311 speaker codec 0x18 on I2C0; I2S MCLK 7, BCLK 15, WS 46, DOUT 45;
+//   speaker amp enable on TCA9554 P7
 //   Battery sense GPIO4 through a 1/3 divider
 //   TCA9554: P0 touch int, P1 BL_EN, P2/P3 IMU int, P4 RTC int,
 //            P5 LCD_RST, P6 SYS_EN (holds battery power on), P7 NS mode
@@ -70,8 +72,11 @@ private:
   uint32_t _since = 0, _rawSince = 0;
 };
 
-extern HalButton BtnA;   // BOOT
-extern HalButton BtnB;   // PWR (short press; long press powers off)
+// Laid out like the M5StickC Plus: the big middle PWR button is A (main
+// action, hold for menu) and the BOOT button (backlight icon on the 3.49B
+// case) is B (second action, hold 3s to power off).
+extern HalButton BtnA;   // PWR, GPIO16
+extern HalButton BtnB;   // BOOT, GPIO0
 
 void halBegin();
 void halUpdate();                    // buttons + touch; call once per loop
@@ -94,5 +99,5 @@ void  halRtcSet(const RTC_TimeTypeDef* t, const RTC_DateTypeDef* d);
 int   halBatteryMv();
 bool  halOnUsb();       // best guess: there is no VBUS sense line
 void  halPowerOff();    // drops SYS_EN; only cuts power when on battery
-void  halBeep(uint16_t freq, uint16_t durMs);   // TODO: ES8311 speaker
+void  halBeep(uint16_t freq, uint16_t durMs);   // ES8311 speaker, non-blocking
 float halTempC();

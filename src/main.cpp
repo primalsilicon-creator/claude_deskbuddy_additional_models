@@ -468,7 +468,7 @@ void drawInfo() {
     ln("approvals pile up.");
     y += 6;
     spr.setTextColor(p.text, p.bg);
-    ln("Press BOOT or tap Approve on a");
+    ln("Press PWR or tap Approve on a");
     ln("prompt to approve from here.");
     y += 6;
     spr.setTextColor(p.textDim, p.bg);
@@ -477,10 +477,10 @@ void drawInfo() {
 
   } else if (infoPage == 1) {
     _infoHeader(p, y, "BUTTONS", infoPage);
-    spr.setTextColor(p.text, p.bg);    ln("BOOT (A)");
+    spr.setTextColor(p.text, p.bg);    ln("PWR (A, middle)");
     spr.setTextColor(p.textDim, p.bg); ln("    next screen / approve prompt");
     ln("    hold: menu"); y += 4;
-    spr.setTextColor(p.text, p.bg);    ln("PWR (B)");
+    spr.setTextColor(p.text, p.bg);    ln("BOOT (B, backlight icon)");
     spr.setTextColor(p.textDim, p.bg); ln("    next page / deny prompt");
     ln("    hold 3s: power off"); y += 4;
     spr.setTextColor(p.text, p.bg);    ln("Touch");
@@ -675,10 +675,10 @@ static void drawApproval() {
   } else {
     spr.fillRoundRect(BTN_APPROVE_X, BTN_Y, BTN_W, BTN_H, 6, GREEN);
     spr.setTextColor(BLACK, GREEN);
-    spr.drawString("Approve (BOOT)", BTN_APPROVE_X + BTN_W / 2, BTN_Y + BTN_H / 2);
+    spr.drawString("Approve (PWR)", BTN_APPROVE_X + BTN_W / 2, BTN_Y + BTN_H / 2);
     spr.fillRoundRect(BTN_DENY_X, BTN_Y, BTN_W, BTN_H, 6, HOT);
     spr.setTextColor(BLACK, HOT);
-    spr.drawString("Deny (PWR)", BTN_DENY_X + BTN_W / 2, BTN_Y + BTN_H / 2);
+    spr.drawString("Deny (BOOT)", BTN_DENY_X + BTN_W / 2, BTN_Y + BTN_H / 2);
   }
   spr.setTextDatum(TL_DATUM);
   spr.setTextSize(1);
@@ -779,7 +779,7 @@ static void drawPetHowTo(const Palette& p) {
   ln(p.textDim, "idle 30s on battery = screen off");
   ln(p.textDim, "any button or touch = wake"); gap();
 
-  ln(p.textDim, "BOOT: screens  PWR: page  hold BOOT: menu");
+  ln(p.textDim, "PWR: screens  BOOT: page  hold PWR: menu");
 }
 
 void drawPet() {
@@ -1041,8 +1041,8 @@ void loop() {
     wake();
   }
 
-  // PWR held 3s: power off. On battery the board switches off; on USB it
-  // goes into deep sleep until BOOT is pressed.
+  // B (BOOT) held 3s: power off. On battery the board switches off; on USB
+  // it goes into deep sleep until BOOT is pressed.
   static bool btnBLong = false;
   if (BtnB.pressedFor(3000) && !btnBLong) {
     btnBLong = true;
@@ -1075,7 +1075,7 @@ void loop() {
     swallowBtnA = false;
   }
 
-  // PWR acts on release, so holding it for power-off doesn't also fire B.
+  // B acts on release, so holding it for power-off doesn't also fire it.
   if (BtnB.wasReleased()) {
     if (!btnBLong && !swallowBtnB) actionB(inPrompt);
     btnBLong = false;
