@@ -159,8 +159,10 @@ const uint8_t MENU_N = 6;
 
 bool    settingsOpen = false;
 uint8_t settingsSel  = 0;
-const char* settingsItems[] = { "brightness", "sound", "bluetooth", "wifi", "flash", "transcript", "flip", "ascii pet", "reset", "back" };
-const uint8_t SETTINGS_N = 10;
+// The original firmware's "bluetooth" and "wifi" items only stored a
+// preference (BLE is always on, there is no WiFi), so they are gone.
+const char* settingsItems[] = { "brightness", "sound", "flash", "transcript", "flip", "ascii pet", "reset", "back" };
+const uint8_t SETTINGS_N = 8;
 
 bool    resetOpen = false;
 uint8_t resetSel  = 0;
@@ -177,20 +179,12 @@ static void applySetting(uint8_t idx) {
       applyBrightness();
       return;
     case 1: s.sound = !s.sound; break;
-    case 2:
-      // BT toggle is a stored preference only — BLE stays live. Turning
-      // BLE off cleanly would require tearing down the BLE stack which
-      // the Arduino BLE library doesn't do reliably. If we need a
-      // hard-off someday, stop advertising via BLEDevice::getAdvertising().
-      s.bt = !s.bt;
-      break;
-    case 3: s.wifi = !s.wifi; break;   // stored only — no WiFi stack linked
-    case 4: s.led = !s.led; break;
-    case 5: s.hud = !s.hud; break;
-    case 6: s.clockRot = (s.clockRot + 1) % 2; halSetFlip(s.clockRot); break;
-    case 7: nextPet(); return;
-    case 8: resetOpen = true; resetSel = 0; resetConfirmIdx = 0xFF; return;
-    case 9: settingsOpen = false; characterInvalidate(); return;
+    case 2: s.led = !s.led; break;
+    case 3: s.hud = !s.hud; break;
+    case 4: s.clockRot = (s.clockRot + 1) % 2; halSetFlip(s.clockRot); break;
+    case 5: nextPet(); return;
+    case 6: resetOpen = true; resetSel = 0; resetConfirmIdx = 0xFF; return;
+    case 7: settingsOpen = false; characterInvalidate(); return;
   }
   settingsSave();
 }
@@ -277,7 +271,7 @@ static void drawSettings() {
   spr.drawRoundRect(mx, my, mw, mh, 4, p.textDim);
   spr.setTextSize(1);
   Settings& s = settings();
-  bool vals[] = { s.sound, s.bt, s.wifi, s.led, s.hud };
+  bool vals[] = { s.sound, s.led, s.hud };
   for (int i = 0; i < SETTINGS_N; i++) {
     bool sel = (i == settingsSel);
     spr.setTextColor(sel ? p.text : p.textDim, PANEL);
@@ -288,13 +282,13 @@ static void drawSettings() {
     spr.setTextColor(p.textDim, PANEL);
     if (i == 0) {
       spr.printf("%u/4", brightLevel);
-    } else if (i >= 1 && i <= 5) {
+    } else if (i >= 1 && i <= 3) {
       spr.setTextColor(vals[i-1] ? GREEN : p.textDim, PANEL);
       spr.print(vals[i-1] ? " on" : "off");
-    } else if (i == 6) {
+    } else if (i == 4) {
       spr.setTextColor(s.clockRot ? GREEN : p.textDim, PANEL);
       spr.print(s.clockRot ? " on" : "off");
-    } else if (i == 7) {
+    } else if (i == 5) {
       uint8_t total = buddySpeciesCount() + (gifAvailable ? 1 : 0);
       uint8_t pos   = buddyMode ? buddySpeciesIdx() + 1 : total;
       spr.printf("%u/%u", pos, total);
@@ -543,17 +537,17 @@ void drawInfo() {
     ln("  uptime   %luh %02lum", up / 3600, (up / 60) % 60);
     ln("  heap     %uKB", ESP.getFreeHeap() / 1024);
     ln("  bright   %u/4", brightLevel);
-    ln("  bt       %s", settings().bt ? (dataBtActive() ? "linked" : "on") : "off");
+    ln("  bt       %s", dataBtActive() ? "linked" : "on");
     ln("  temp     %dC (chip)", (int)halTempC());
 
   } else if (infoPage == 4) {
     _infoHeader(p, y, "BLUETOOTH", infoPage);
-    bool linked = settings().bt && dataBtActive();
+    bool linked = dataBtActive();
 
-    spr.setTextColor(linked ? GREEN : (settings().bt ? HOT : p.textDim), p.bg);
+    spr.setTextColor(linked ? GREEN : HOT, p.bg);
     spr.setTextSize(2);
     spr.setCursor(4, y);
-    spr.print(linked ? "linked" : (settings().bt ? "discover" : "off"));
+    spr.print(linked ? "linked" : "discover");
     spr.setTextSize(1);
     y += 20;
 
@@ -570,7 +564,7 @@ void drawInfo() {
     if (linked) {
       uint32_t age = (millis() - tama.lastUpdated) / 1000;
       ln("  last msg  %lus", (unsigned long)age);
-    } else if (settings().bt) {
+    } else {
       spr.setTextColor(p.text, p.bg);
       ln("TO PAIR");
       spr.setTextColor(p.textDim, p.bg);
@@ -966,7 +960,7 @@ void setup() {
   buddyInit();
   lastInteractMs = millis();
 
-  // BLE stays always-on; s.bt is stored as a preference only.
+  // BLE is always on.
   // 640x172x2 = 220KB: TFT_eSprite puts it in PSRAM.
   if (!spr.createSprite(SCREEN_W, SCREEN_H)) {
     Serial.println("FATAL: could not allocate the frame sprite (PSRAM enabled?)");
