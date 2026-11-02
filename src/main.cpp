@@ -27,16 +27,22 @@ static void startBt() {
 // Landscape 640x172. The pet draws in the left pane (x < PET_PANE_W) in
 // absolute coordinates. Everything else draws inside a viewport over the
 // right-hand panel, so W/H/CX below are the panel's size, not the screen's.
-const int W = SCREEN_W - PET_PANE_W, H = SCREEN_H;
+// The case bezel covers the panel's outer few pixels, so everything is
+// inset: the panel by PANEL_PAD_X on each side and PANEL_TOP / PANEL_BOTTOM
+// vertically, the pet by PET_TOP.
+const int PANEL_PAD_X = 6, PANEL_TOP = 8, PANEL_BOTTOM = 6, PET_TOP = 8;
+const int W = SCREEN_W - PET_PANE_W - 2 * PANEL_PAD_X;
+const int H = SCREEN_H - PANEL_TOP - PANEL_BOTTOM;
 const int CX = W / 2;
 // The board has no LED. "Attention" flashes a border around the screen.
-const int FLASH_PX = 3;
+const int FLASH_PX = 6;   // thick enough to show past the bezel
 // QMI8658 Z axis sign when the screen faces down. Calibrated at boot: if the
 // board is lying flat when it starts, that is taken as face-up, and face-down
 // is the opposite sign. Otherwise this default is used.
 float FACE_DOWN_Z_SIGN = -1.0f;
 
-static void panelBegin() { spr.setViewport(PET_PANE_W, 0, W, H, true); }
+static void panelBegin() { spr.setViewport(PET_PANE_W + PANEL_PAD_X, PANEL_TOP, W, H, true); }
+static void petBegin()   { spr.setViewport(0, PET_TOP, PET_PANE_W - 1, SCREEN_H - PET_TOP, true); }
 static void panelEnd()   { spr.resetViewport(); }
 
 // Colors used across multiple UI surfaces
@@ -247,6 +253,7 @@ static void applyReset(uint8_t idx) {
 // Footer hint row inside a menu panel: "<downLbl> ↓  <rightLbl> →" with
 // pixel triangles. Panels add MENU_HINT_H to height and call this at bottom.
 const int MENU_HINT_H = 14;
+const int MENU_ROW = 12;   // item pitch; 10 settings rows fit the inset panel
 static void drawMenuHints(const Palette& p, int mx, int mw, int hy,
                           const char* downLbl = "A", const char* rightLbl = "B") {
   spr.drawFastHLine(mx + 6, hy - 4, mw - 12, p.textDim);
@@ -264,7 +271,7 @@ static void drawMenuHints(const Palette& p, int mx, int mw, int hy,
 
 static void drawSettings() {
   const Palette& p = characterPalette();
-  int mw = 118, mh = 16 + SETTINGS_N * 14 + MENU_HINT_H;
+  int mw = 118, mh = 16 + SETTINGS_N * MENU_ROW + MENU_HINT_H;
   int mx = (W - mw) / 2, my = (H - mh) / 2;
   spr.fillRoundRect(mx, my, mw, mh, 4, PANEL);
   spr.drawRoundRect(mx, my, mw, mh, 4, p.textDim);
@@ -274,10 +281,10 @@ static void drawSettings() {
   for (int i = 0; i < SETTINGS_N; i++) {
     bool sel = (i == settingsSel);
     spr.setTextColor(sel ? p.text : p.textDim, PANEL);
-    spr.setCursor(mx + 6, my + 8 + i * 14);
+    spr.setCursor(mx + 6, my + 8 + i * MENU_ROW);
     spr.print(sel ? "> " : "  ");
     spr.print(settingsItems[i]);
-    spr.setCursor(mx + mw - 36, my + 8 + i * 14);
+    spr.setCursor(mx + mw - 36, my + 8 + i * MENU_ROW);
     spr.setTextColor(p.textDim, PANEL);
     if (i == 0) {
       spr.printf("%u/4", brightLevel);
@@ -298,7 +305,7 @@ static void drawSettings() {
 
 static void drawReset() {
   const Palette& p = characterPalette();
-  int mw = 118, mh = 16 + RESET_N * 14 + MENU_HINT_H;
+  int mw = 118, mh = 16 + RESET_N * MENU_ROW + MENU_HINT_H;
   int mx = (W - mw) / 2, my = (H - mh) / 2;
   spr.fillRoundRect(mx, my, mw, mh, 4, PANEL);
   spr.drawRoundRect(mx, my, mw, mh, 4, HOT);
@@ -306,7 +313,7 @@ static void drawReset() {
   for (int i = 0; i < RESET_N; i++) {
     bool sel = (i == resetSel);
     spr.setTextColor(sel ? p.text : p.textDim, PANEL);
-    spr.setCursor(mx + 6, my + 8 + i * 14);
+    spr.setCursor(mx + 6, my + 8 + i * MENU_ROW);
     spr.print(sel ? "> " : "  ");
     bool armed = (i == resetConfirmIdx) &&
                  (int32_t)(millis() - resetConfirmUntil) < 0;
@@ -335,7 +342,7 @@ void menuConfirm() {
 
 void drawMenu() {
   const Palette& p = characterPalette();
-  int mw = 118, mh = 16 + MENU_N * 14 + MENU_HINT_H;
+  int mw = 118, mh = 16 + MENU_N * MENU_ROW + MENU_HINT_H;
   int mx = (W - mw) / 2, my = (H - mh) / 2;
   spr.fillRoundRect(mx, my, mw, mh, 4, PANEL);
   spr.drawRoundRect(mx, my, mw, mh, 4, p.textDim);
@@ -343,7 +350,7 @@ void drawMenu() {
   for (int i = 0; i < MENU_N; i++) {
     bool sel = (i == menuSel);
     spr.setTextColor(sel ? p.text : p.textDim, PANEL);
-    spr.setCursor(mx + 6, my + 8 + i * 14);
+    spr.setCursor(mx + 6, my + 8 + i * MENU_ROW);
     spr.print(sel ? "> " : "  ");
     spr.print(menuItems[i]);
     if (i == 4) spr.print(dataDemo() ? "  on" : "  off");
@@ -600,7 +607,7 @@ void drawInfo() {
 
 // Greedy word-wrap into fixed-width rows. Continuation rows get a leading
 // space. Returns number of rows written.
-const uint8_t WRAP_MAX = 72;   // widest wrap: 432px panel text / 6px glyphs
+const uint8_t WRAP_MAX = 70;   // widest wrap: 428px panel text / 6px glyphs
 static uint8_t wrapInto(const char* in, char out[][WRAP_MAX + 2], uint8_t maxRows, uint8_t width) {
   uint8_t row = 0, col = 0;
   const char* p = in;
@@ -1141,7 +1148,8 @@ void loop() {
   if (pk && !lastPasskey) { wake(); beep(1800, 60); }
   lastPasskey = pk;
 
-  // Pet pane (absolute coordinates, x < PET_PANE_W)
+  // Pet pane, inset from the top bezel
+  petBegin();
   if (napping || screenOff) {
     // skip render — face-down or screen off
   } else if (buddyMode) {
@@ -1171,6 +1179,7 @@ void loop() {
       spr.print("no character loaded");
     }
   }
+  panelEnd();
 
   if (!napping && !screenOff) {
     // Right-hand panel
