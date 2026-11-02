@@ -813,14 +813,26 @@ void drawPet() {
 void drawHUD() {
   if (tama.promptId[0]) { drawApproval(); return; }
   const Palette& p = characterPalette();
-  // The whole panel is transcript, in TFT_eSPI's 16px font 2 for
-  // readability: about 9 rows of up to ~50 characters. Font 2 is
+  // A one-line session summary, then the transcript history in TFT_eSPI's
+  // 16px font 2: about 8 rows of up to ~50 characters. Font 2 is
   // proportional, so 50 chars of normal text fits the 428px panel.
+  const int HDR = 12;
   const int LH = 17, WIDTH = 50;
-  const int SHOW = (H - 4) / LH;
-  const int AREA = H;
-  spr.fillRect(0, H - AREA, W, AREA, p.bg);
+  const int SHOW = (H - HDR - 2) / LH;
+  const int AREA = H - HDR;
+  spr.fillRect(0, 0, W, H, p.bg);
   spr.setTextSize(1);
+  spr.setTextColor(p.textDim, p.bg);
+  spr.setCursor(4, 1);
+  if (tama.connected) {
+    spr.printf("sessions %u   running %u   waiting %u", tama.sessionsTotal,
+               tama.sessionsRunning, tama.sessionsWaiting);
+    if (tama.nLines) {
+      spr.setCursor(W - 6 * 12, 1);
+      spr.printf("%2u lines", tama.nLines);
+    }
+  }
+  spr.drawFastHLine(0, HDR - 2, W, p.textDim);
   spr.setTextFont(2);
 
   if (tama.lineGen != lastLineGen) { msgScroll = 0; lastLineGen = tama.lineGen; wake(); }
@@ -835,11 +847,24 @@ void drawHUD() {
 
   // Wrap all transcript lines into a flat display buffer. Track which
   // transcript index each display row came from, so we can dim older ones.
-  static char disp[40][WRAP_MAX + 2];
-  static uint8_t srcOf[40];
+  // Wrap newest-first so a long history keeps its newest lines when the
+  // row buffer fills, then display in oldest-to-newest order.
+  const uint8_t MAXROWS = 96;
+  static char disp[MAXROWS][WRAP_MAX + 2];
+  static uint8_t srcOf[MAXROWS];
+  static char tmp[6][WRAP_MAX + 2];
   uint8_t nDisp = 0;
-  for (uint8_t i = 0; i < tama.nLines && nDisp < 40; i++) {
-    uint8_t got = wrapInto(tama.lines[i], &disp[nDisp], 40 - nDisp, WIDTH);
+  int firstLine = 0;
+  {
+    uint8_t rows = 0;
+    for (int i = tama.nLines - 1; i >= 0; i--) {
+      uint8_t got = wrapInto(tama.lines[i], tmp, 6, WIDTH);
+      if (rows + got > MAXROWS) break;
+      rows += got; firstLine = i;
+    }
+  }
+  for (uint8_t i = firstLine; i < tama.nLines && nDisp < MAXROWS; i++) {
+    uint8_t got = wrapInto(tama.lines[i], &disp[nDisp], MAXROWS - nDisp, WIDTH);
     for (uint8_t j = 0; j < got; j++) srcOf[nDisp + j] = i;
     nDisp += got;
   }
@@ -849,12 +874,13 @@ void drawHUD() {
 
   int end = (int)nDisp - msgScroll;
   int start = end - SHOW; if (start < 0) start = 0;
-  uint8_t newest = tama.nLines - 1;
+  // Lines the desktop still lists are bright; older history is dimmed.
+  int currentFrom = (int)tama.nLines - tama.linesFromLatest;
   for (int i = 0; start + i < end; i++) {
     uint8_t row = start + i;
-    bool fresh = (srcOf[row] == newest) && (msgScroll == 0);
-    spr.setTextColor(fresh ? p.text : p.textDim, p.bg);
-    spr.setCursor(4, H - AREA + 2 + i * LH);
+    bool current = tama.connected && srcOf[row] >= currentFrom;
+    spr.setTextColor(current ? p.text : p.textDim, p.bg);
+    spr.setCursor(4, H - AREA + 1 + i * LH);
     spr.print(disp[row]);
   }
   if (msgScroll > 0) {
@@ -925,7 +951,7 @@ static void actionB(bool inPrompt) {
     applyDisplayMode();
   } else {
     beep(2400, 30);
-    msgScroll = (msgScroll >= 30) ? 0 : msgScroll + 1;
+    msgScroll = (msgScroll >= 90) ? 0 : msgScroll + 1;   // clamped to history in drawHUD
   }
 }
 

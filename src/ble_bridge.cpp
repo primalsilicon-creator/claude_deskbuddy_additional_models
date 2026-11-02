@@ -17,7 +17,7 @@
 // Incoming bytes are buffered in a simple ring for bleRead()/bleAvailable().
 // Sized to hold a transcript snapshot JSON plus headroom; the GATT layer
 // will flow-control if we fall behind.
-static const size_t RX_CAP = 2048;
+static const size_t RX_CAP = 8192;   // room for a few 4KB heartbeats/turn events
 static uint8_t  rxBuf[RX_CAP];
 static volatile size_t rxHead = 0;
 static volatile size_t rxTail = 0;

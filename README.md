@@ -36,6 +36,12 @@ characters are unchanged. What changed:
   onboard speaker (settings → sound).
 - **Settings → flip** turns the picture 180° if it comes up upside down
   in your case.
+- **Transcript history.** The desktop sends one merged list of recent lines
+  with no session ids, and drops older sessions from it. Instead of
+  replacing the screen with each list, the board keeps a rolling history of
+  the last 40 lines: lines the desktop still lists are bright, older ones are
+  dimmed. A header shows total / running / waiting sessions. BOOT (B)
+  scrolls back.
 - **Battery.** The board only reports battery voltage. It has no current
   or USB-power sensing, so "on USB" is a guess (battery above 4.15V).
 

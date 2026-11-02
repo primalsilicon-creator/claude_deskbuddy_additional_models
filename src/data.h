@@ -13,8 +13,13 @@ struct TamaState {
   uint32_t lastUpdated;
   char     msg[24];
   bool     connected;
-  char     lines[8][92];
+  // Rolling transcript history, oldest first. Heartbeats carry one merged
+  // "entries" list with no session ids, so instead of replacing the screen
+  // with each list, new lines are appended here and old ones scroll off.
+  // That way lines survive heartbeats that drop older sessions.
+  char     lines[40][92];
   uint8_t  nLines;
+  uint8_t  linesFromLatest;  // how many trailing lines the last heartbeat still lists
   uint16_t lineGen;          // bumps when lines change — lets UI reset scroll
   char     promptId[40];     // pending permission request ID; empty = no prompt
   char     promptTool[20];
@@ -67,6 +72,8 @@ inline const char* dataScenarioName() {
 static bool _rtcValid = false;
 inline bool dataRtcValid() { return _rtcValid; }
 
+static inline bool pr_present(JsonDocument& d) { return !d["prompt"].isNull(); }
+
 static void _applyJson(const char* line, TamaState* out) {
   JsonDocument doc;
   if (deserializeJson(doc, line)) return;
@@ -100,17 +107,35 @@ static void _applyJson(const char* line, TamaState* out) {
   if (m) { strncpy(out->msg, m, sizeof(out->msg)-1); out->msg[sizeof(out->msg)-1]=0; }
   JsonArray la = doc["entries"];
   if (!la.isNull()) {
-    uint8_t n = 0;
+    // Merge into the history: append entries we haven't seen, in the order
+    // given (the UI treats the last one as newest). An empty list keeps the
+    // history and just marks it all as no longer current.
+    const uint8_t CAP = sizeof(out->lines) / sizeof(out->lines[0]);
+    bool added = false;
+    uint8_t current = 0;
     for (JsonVariant v : la) {
-      if (n >= 8) break;
       const char* s = v.as<const char*>();
-      strncpy(out->lines[n], s ? s : "", 91); out->lines[n][91]=0;
-      n++;
+      if (!s || !*s) continue;
+      current++;
+      bool seen = false;
+      for (uint8_t i = 0; i < out->nLines; i++) {
+        if (strncmp(out->lines[i], s, 91) == 0) { seen = true; break; }
+      }
+      if (seen) continue;
+      if (out->nLines == CAP) {           // drop the oldest
+        memmove(out->lines[0], out->lines[1], (CAP - 1) * sizeof(out->lines[0]));
+        out->nLines--;
+      }
+      strncpy(out->lines[out->nLines], s, 91); out->lines[out->nLines][91] = 0;
+      out->nLines++;
+      added = true;
     }
-    if (n != out->nLines || (n > 0 && strcmp(out->lines[n-1], out->msg) != 0)) {
-      out->lineGen++;
-    }
-    out->nLines = n;
+    out->linesFromLatest = current;
+    if (added) out->lineGen++;
+    Serial.printf("hb: total %u running %u waiting %u entries %u (new %s) history %u%s\n",
+                  out->sessionsTotal, out->sessionsRunning, out->sessionsWaiting,
+                  (unsigned)la.size(), added ? "yes" : "no", out->nLines,
+                  pr_present(doc) ? " prompt" : "");
   }
   JsonObject pr = doc["prompt"];
   if (!pr.isNull()) {
@@ -141,7 +166,9 @@ struct _LineBuf {
   }
 };
 
-static _LineBuf<1024> _usbLine, _btLine;
+// Turn events can be up to 4KB, and a heartbeat with a long transcript plus
+// a prompt can pass 1KB, so lines up to 4KB are accepted.
+static _LineBuf<4096> _usbLine, _btLine;
 
 inline void dataPoll(TamaState* out) {
   uint32_t now = millis();
