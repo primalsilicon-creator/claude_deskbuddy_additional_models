@@ -49,8 +49,8 @@ including touch coordinates and whether the IMU was found.
 - The picture is the right way up (otherwise **settings → flip**).
 - Tapping the pet side counts as BOOT, the panel side as PWR. If taps land
   on the wrong side, check the `touch:` lines in the serial log.
-- Lying the board **face down** dims it (nap). If it dims when face **up**,
-  change `FACE_DOWN_Z_SIGN` in `src/main.cpp` to `+1.0f`.
+- Lying the board **face down** dims it (nap). The firmware treats however
+  the board is lying at power-on as face up, so boot it face up or standing.
 
 The original README for the M5StickC Plus follows.
 

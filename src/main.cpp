@@ -31,9 +31,10 @@ const int W = SCREEN_W - PET_PANE_W, H = SCREEN_H;
 const int CX = W / 2;
 // The board has no LED. "Attention" flashes a border around the screen.
 const int FLASH_PX = 3;
-// QMI8658 Z axis sign when the screen faces down. If napping triggers with
-// the screen facing up, flip this to +1.
-const float FACE_DOWN_Z_SIGN = -1.0f;
+// QMI8658 Z axis sign when the screen faces down. Calibrated at boot: if the
+// board is lying flat when it starts, that is taken as face-up, and face-down
+// is the opposite sign. Otherwise this default is used.
+float FACE_DOWN_Z_SIGN = -1.0f;
 
 static void panelBegin() { spr.setViewport(PET_PANE_W, 0, W, H, true); }
 static void panelEnd()   { spr.resetViewport(); }
@@ -966,6 +967,11 @@ void setup() {
     spr.fillSprite(p.bg);
   }
 
+  {
+    float ax, ay, az; halAccel(&ax, &ay, &az);
+    if (halImuOk() && fabsf(az) > 0.7f) FACE_DOWN_Z_SIGN = az > 0 ? -1.0f : 1.0f;
+    Serial.printf("imu at boot: %.2f %.2f %.2f, face-down sign %+.0f\n", ax, ay, az, FACE_DOWN_Z_SIGN);
+  }
   Serial.printf("buddy: %s, imu %s, psram free %u\n",
                 buddyMode ? "ASCII mode" : "GIF character loaded",
                 halImuOk() ? "ok" : "missing", ESP.getFreePsram());
