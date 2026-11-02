@@ -1199,6 +1199,8 @@ void loop() {
   if (!napping && faceDownFrames >= 15) {
     napping = true;
     napStartMs = now;
+    { float ax, ay, az; halAccel(&ax, &ay, &az);
+      Serial.printf("nap: face-down detected (accel %.2f %.2f %.2f) -> dimming\n", ax, ay, az); }
     halBacklight(8);
     dimmed = true;
   } else if (napping && faceDownFrames <= -8) {
@@ -1215,6 +1217,17 @@ void loop() {
       && millis() - lastInteractMs > SCREEN_OFF_MS) {
     halScreenOn(false);
     screenOff = true;
+    Serial.printf("screen off: idle %lus on battery (vbat %dmV, usb guess %s)\n",
+                  SCREEN_OFF_MS / 1000, halBatteryMv(), _onUsb ? "yes" : "no");
+  }
+
+  // Once every 5s: what the power and tilt heuristics are seeing.
+  static uint32_t lastDiag = 0;
+  if (now - lastDiag > 5000) {
+    lastDiag = now;
+    float ax, ay, az; halAccel(&ax, &ay, &az);
+    Serial.printf("diag: vbat %dmV usb=%d accel %.2f %.2f %.2f screenOff=%d napping=%d\n",
+                  halBatteryMv(), _onUsb, ax, ay, az, screenOff, napping);
   }
 
   delay(screenOff ? 100 : 16);
