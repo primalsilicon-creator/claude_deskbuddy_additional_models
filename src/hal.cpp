@@ -184,8 +184,11 @@ static const int BL_CH = 1;
 static uint8_t _blPercent = 100;
 static bool _screenOn = true;
 
+// The backlight PWM is inverted on this board: duty 255 is dark, 0 is full
+// brightness (Waveshare's demo defines LCD_PWM_MODE_255 as 0xff - 255).
 static void blApply() {
-  uint32_t duty = _screenOn ? (uint32_t)_blPercent * 255 / 100 : 0;
+  uint32_t level = _screenOn ? (uint32_t)_blPercent * 255 / 100 : 0;
+  uint32_t duty = 255 - level;
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
   ledcWrite(PIN_LCD_BL, duty);
 #else
