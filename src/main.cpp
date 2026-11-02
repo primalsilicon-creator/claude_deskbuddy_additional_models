@@ -972,6 +972,13 @@ void setup() {
     if (halImuOk() && fabsf(az) > 0.7f) FACE_DOWN_Z_SIGN = az > 0 ? -1.0f : 1.0f;
     Serial.printf("imu at boot: %.2f %.2f %.2f, face-down sign %+.0f\n", ax, ay, az, FACE_DOWN_Z_SIGN);
   }
+  {
+    static const char* const RR[] = { "unknown", "power-on", "external pin", "software",
+      "panic/crash", "interrupt watchdog", "task watchdog", "other watchdog",
+      "deep sleep", "brownout", "SDIO", "USB", "JTAG" };
+    int rr = (int)esp_reset_reason();
+    Serial.printf("reset reason: %d (%s)\n", rr, rr < 13 ? RR[rr] : "?");
+  }
   Serial.printf("buddy: %s, imu %s, psram free %u\n",
                 buddyMode ? "ASCII mode" : "GIF character loaded",
                 halImuOk() ? "ok" : "missing", ESP.getFreePsram());
