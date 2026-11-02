@@ -813,12 +813,15 @@ void drawPet() {
 void drawHUD() {
   if (tama.promptId[0]) { drawApproval(); return; }
   const Palette& p = characterPalette();
-  // The whole panel is transcript now: 20 rows of up to 72 characters.
-  const int LH = 8, WIDTH = WRAP_MAX;
-  const int SHOW = (H - 8) / LH;
+  // The whole panel is transcript, in TFT_eSPI's 16px font 2 for
+  // readability: about 9 rows of up to ~50 characters. Font 2 is
+  // proportional, so 50 chars of normal text fits the 428px panel.
+  const int LH = 17, WIDTH = 50;
+  const int SHOW = (H - 4) / LH;
   const int AREA = H;
   spr.fillRect(0, H - AREA, W, AREA, p.bg);
   spr.setTextSize(1);
+  spr.setTextFont(2);
 
   if (tama.lineGen != lastLineGen) { msgScroll = 0; lastLineGen = tama.lineGen; wake(); }
 
@@ -826,6 +829,7 @@ void drawHUD() {
     spr.setTextColor(p.text, p.bg);
     spr.setCursor(4, H - LH - 2);
     spr.print(tama.msg);
+    spr.setTextFont(1);
     return;
   }
 
@@ -855,9 +859,10 @@ void drawHUD() {
   }
   if (msgScroll > 0) {
     spr.setTextColor(p.body, p.bg);
-    spr.setCursor(W - 18, H - LH - 2);
+    spr.setCursor(W - 24, H - LH - 2);
     spr.printf("-%u", msgScroll);
   }
+  spr.setTextFont(1);
 }
 
 // Approve or deny the pending prompt. Shared by buttons and touch.
