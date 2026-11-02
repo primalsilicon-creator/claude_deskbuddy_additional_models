@@ -804,6 +804,20 @@ void drawPet() {
   spr.printf("%u/%u", petPage + 1, PET_PAGES);
 }
 
+// Full-width banner along the bottom of the panel, pulsing gently so it
+// catches the eye from across the desk.
+static void drawDeskWaitBanner(int h) {
+  bool on = (millis() / 700) % 2;
+  uint16_t bg = on ? HOT : 0x8000;
+  spr.fillRoundRect(0, H - h, W, h, 6, bg);
+  spr.setTextColor(WHITE, bg);
+  spr.setTextDatum(MC_DATUM);
+  spr.setTextFont(4);
+  spr.drawString("Approve on desktop", W / 2, H - h / 2 + 1);
+  spr.setTextDatum(TL_DATUM);
+  spr.setTextFont(2);
+}
+
 void drawHUD() {
   if (tama.promptId[0]) { drawApproval(); return; }
   const Palette& p = characterPalette();
@@ -812,7 +826,12 @@ void drawHUD() {
   // proportional, so 50 chars of normal text fits the 428px panel.
   const int HDR = 12;
   const int LH = 17, WIDTH = 50;
-  const int SHOW = (H - HDR - 2) / LH;
+  // The desktop says a session is waiting but sent no prompt to answer
+  // here (it only relays prompts for sessions it tracks). Show a big banner
+  // at the bottom so it isn't missed, and keep the transcript above it.
+  const bool deskWait = tama.connected && tama.sessionsWaiting > 0;
+  const int BANNER = 34;
+  const int SHOW = (H - HDR - 2 - (deskWait ? BANNER : 0)) / LH;
   const int AREA = H - HDR;
   spr.fillRect(0, 0, W, H, p.bg);
   spr.setTextSize(1);
@@ -821,14 +840,7 @@ void drawHUD() {
   if (tama.connected) {
     spr.printf("sessions %u   running %u   waiting %u", tama.sessionsTotal,
                tama.sessionsRunning, tama.sessionsWaiting);
-    if (tama.sessionsWaiting > 0) {
-      // The desktop says something is waiting but sent no prompt to answer
-      // here. That happens for sessions it isn't relaying (e.g. ones that
-      // were open before the buddy connected).
-      spr.setTextColor(HOT, p.bg);
-      spr.setCursor(W - 6 * 28, 1);
-      spr.print("approve on desktop");
-    } else if (tama.nLines) {
+    if (tama.nLines && !deskWait) {
       spr.setCursor(W - 6 * 12, 1);
       spr.printf("%2u lines", tama.nLines);
     }
@@ -840,8 +852,9 @@ void drawHUD() {
 
   if (tama.nLines == 0) {
     spr.setTextColor(p.text, p.bg);
-    spr.setCursor(4, H - LH - 2);
+    spr.setCursor(4, H - LH - 2 - (deskWait ? BANNER : 0));
     spr.print(tama.msg);
+    if (deskWait) drawDeskWaitBanner(BANNER);
     spr.setTextFont(1);
     return;
   }
@@ -886,9 +899,10 @@ void drawHUD() {
   }
   if (msgScroll > 0) {
     spr.setTextColor(p.body, p.bg);
-    spr.setCursor(W - 24, H - LH - 2);
+    spr.setCursor(W - 24, H - LH - 2 - (deskWait ? BANNER : 0));
     spr.printf("-%u", msgScroll);
   }
+  if (deskWait) drawDeskWaitBanner(BANNER);
   spr.setTextFont(1);
 }
 
@@ -1066,6 +1080,20 @@ void loop() {
       if (buddyMode) buddyInvalidate();
     }
   }
+
+  // A session started waiting with no prompt relayed to us: wake the
+  // screen, chirp, and go back to the transcript so the banner shows.
+  static uint8_t lastWaiting = 0;
+  if (tama.sessionsWaiting > lastWaiting && !tama.promptId[0] && tama.connected) {
+    wake();
+    beep(1200, 80);
+    displayMode = DISP_NORMAL;
+    menuOpen = settingsOpen = resetOpen = false;
+    applyDisplayMode();
+    characterInvalidate();
+    if (buddyMode) buddyInvalidate();
+  }
+  lastWaiting = tama.sessionsWaiting;
 
   bool inPrompt = tama.promptId[0] && !responseSent;
 
