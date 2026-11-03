@@ -3,14 +3,14 @@
 #include "hal.h"
 #include <string.h>
 
-extern TFT_eSprite spr;
+extern TFT_eSprite& petSpr;   // see character.cpp
 
 // Mirrors PersonaState in main.cpp
 enum { B_SLEEP, B_IDLE, B_BUSY, B_ATTENTION, B_CELEBRATE, B_DIZZY, B_HEART };
 
 // ──────────────── shared geometry ────────────────
-const int BUDDY_X_CENTER = 100;   // centre of the 200px pet pane
-const int BUDDY_CANVAS_W = 200;
+const int BUDDY_X_CENTER = PET_PANE_W / 2;   // centre of the pet pane
+const int BUDDY_CANVAS_W = PET_PANE_W;
 const int BUDDY_Y_BASE   = 30;
 const int BUDDY_Y_OVERLAY = 6;
 const int BUDDY_CHAR_W   = 6;
@@ -33,7 +33,7 @@ const uint16_t BUDDY_BLUE   = 0x041F;
 // M5.Lcd for landscape clock mode (both inherit TFT_eSPI). Coords stay
 // fixed — species hardcode BUDDY_X_CENTER/BUDDY_Y_OVERLAY in their
 // particle calls, so retargeting position would only move the body.
-static TFT_eSPI* _tgt = &spr;
+static TFT_eSPI* _tgt = &petSpr;
 // 2× on home screen, 1× in peek (PET/INFO) and landscape clock. Species
 // art is space-padded to a fixed width for alignment at 1×; at 2× we trim
 // and re-center per line so the padding doesn't push ink off-screen.
@@ -188,7 +188,7 @@ void buddyTick(uint8_t personaState) {
   lastDrawnSpecies = currentSpeciesIdx;
 
   // Clear the whole render strip — at 2× the body reaches y≈126, at 1× ≈82.
-  spr.fillRect(0, 0, BUDDY_CANVAS_W,
+  petSpr.fillRect(0, 0, BUDDY_CANVAS_W,
                (BUDDY_Y_BASE + 5 * BUDDY_CHAR_H + 12) * _scale, BUDDY_BG);
 
   const Species* sp = SPECIES_TABLE[currentSpeciesIdx];

@@ -4,7 +4,8 @@
 #include <AnimatedGIF.h>
 #include <ArduinoJson.h>
 
-extern TFT_eSprite spr;
+// The pet's sprite: the main sprite on the Waveshare, its own on the 32E.
+extern TFT_eSprite& petSpr;
 
 static const char* STATE_NAMES[] = {
   "sleep", "idle", "busy", "attention", "celebrate", "dizzy", "heart"
@@ -44,14 +45,14 @@ static const int   PEEK_TOP = 70;
 static bool        peekMode = false;
 // Draw target — defaults to the sprite; characterRenderTo() retargets to
 // M5.Lcd for the landscape clock (both inherit TFT_eSPI).
-static TFT_eSPI*   _tgt = &spr;
+static TFT_eSPI*   _tgt = &petSpr;
 // Peek mode renders at half scale (2:1 nearest-neighbor in gifDrawCb) so
 // the whole pet fits the 70px window instead of cropping the top.
 static void gifPlace() {
   int outW = peekMode ? gifW / 2 : gifW;
   int outH = peekMode ? gifH / 2 : gifH;
   gifX = (PET_PANE_W - outW) / 2;
-  gifY = peekMode ? (PEEK_TOP - outH) / 2 : (SCREEN_H - outH) / 2;
+  gifY = peekMode ? (PEEK_TOP - outH) / 2 : (PET_PANE_H - outH) / 2;
 }
 static uint32_t    nextFrameAt = 0;
 static uint32_t    animPauseUntil = 0;
@@ -125,7 +126,7 @@ static void gifDrawCb(GIFDRAW* d) {
   }
 
   int y = gifY + srcY;
-  if (y < 0 || y >= SCREEN_H) return;
+  if (y < 0 || y >= PET_PANE_H) return;
   int x0 = gifX + d->iX;
   int w  = d->iWidth;
   if (w > 256) w = 256;
@@ -281,7 +282,7 @@ void characterClose() {
 void characterInvalidate() {
   if (!loaded) return;
   if (textMode) {
-    spr.fillSprite(pal.bg);
+    petSpr.fillSprite(pal.bg);
     uint8_t s = curState; curState = 0xFF;
     characterSetState(s);
     return;
@@ -299,7 +300,7 @@ void characterSetState(uint8_t s) {
     curState = s;
     textFrame = 0;
     textNext = 0;
-    spr.fillSprite(pal.bg);
+    petSpr.fillSprite(pal.bg);
     return;
   }
 
@@ -320,7 +321,7 @@ void characterSetState(uint8_t s) {
     gifW = gif.getCanvasWidth();
     gifH = gif.getCanvasHeight();
     gifPlace();
-    spr.fillSprite(pal.bg);   // bias upward, leave room for HUD
+    petSpr.fillSprite(pal.bg);   // bias upward, leave room for HUD
     nextFrameAt = 0;
     variantStartedMs = millis();
     Serial.printf("[char] %s: %dx%d @ (%d,%d) heap=%u\n",
@@ -343,15 +344,15 @@ void characterTick() {
     // Clear a band around the text, not the whole sprite — keeps overlays
     // like the approval panel and the HUD untouched.
     int cy = peekMode ? 35 : 60;
-    spr.fillRect(0, cy - 14, PET_PANE_W, 28, pal.bg);
+    petSpr.fillRect(0, cy - 14, PET_PANE_W, 28, pal.bg);
 
     const char* line = ts.frames[textFrame];
     int len = strlen(line);
     int tw = len * 12;                                    // size-2 glyph width
-    spr.setTextColor(pal.body, pal.bg);
-    spr.setTextSize(2);
-    spr.setCursor((PET_PANE_W - tw) / 2, cy - 8);
-    spr.print(line);
+    petSpr.setTextColor(pal.body, pal.bg);
+    petSpr.setTextSize(2);
+    petSpr.setCursor((PET_PANE_W - tw) / 2, cy - 8);
+    petSpr.print(line);
 
     textFrame = (textFrame + 1) % ts.nFrames;
     return;
