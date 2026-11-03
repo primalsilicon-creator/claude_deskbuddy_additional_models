@@ -102,6 +102,29 @@ static uint32_t _downSince = 0, _lastTouchPoll = 0, _lastSeenDown = 0;
 static const uint32_t LONG_PRESS_MS = 600;
 static const int TAP_SLOP_PX = 24;    // more movement than this isn't a tap
 
+// Generic XPT2046 values, used until a calibration is saved. Rough, but
+// enough to reach settings > touch cal.
+static uint16_t DEFAULT_CAL[5] = { 300, 3500, 300, 3500, 0 };
+
+// Wait up to ms for a firm press and its release, logging raw readings so
+// a dead touch chip shows up on serial. True if the screen was pressed.
+static bool waitForPress(uint32_t ms) {
+  uint32_t t0 = millis(), lastLog = 0;
+  bool pressed = false;
+  while (millis() - t0 < ms) {
+    uint16_t z = tft.getTouchRawZ();
+    if (millis() - lastLog > 500) {
+      lastLog = millis();
+      uint16_t rx = 0, ry = 0; tft.getTouchRaw(&rx, &ry);
+      Serial.printf("touch: raw x %u y %u z %u, irq %d\n", rx, ry, z, digitalRead(PIN_TOUCH_IRQ));
+    }
+    if (z > 400) pressed = true;
+    else if (pressed) return true;   // released
+    delay(20);
+  }
+  return false;
+}
+
 void halTouchCalibrate() {
   uint16_t cal[5];
   bool wasFlipped = _flip;
@@ -111,10 +134,26 @@ void halTouchCalibrate() {
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setTextDatum(MC_DATUM);
   tft.setTextFont(2);
-  tft.drawString("Touch calibration", SCREEN_W / 2, SCREEN_H / 2 - 20);
-  tft.drawString("Press each corner arrow", SCREEN_W / 2, SCREEN_H / 2);
-  tft.drawString("firmly, one at a time", SCREEN_W / 2, SCREEN_H / 2 + 20);
+  tft.drawString("Touch calibration", SCREEN_W / 2, SCREEN_H / 2 - 30);
+  tft.drawString("Press firmly to start,", SCREEN_W / 2, SCREEN_H / 2 - 6);
+  tft.drawString("then press each corner arrow", SCREEN_W / 2, SCREEN_H / 2 + 14);
+  tft.drawString("(skips in 20s)", SCREEN_W / 2, SCREEN_H / 2 + 40);
   tft.setTextDatum(TL_DATUM);
+  Serial.println("touch: waiting for a press to start calibration");
+  if (!waitForPress(20000)) {
+    // No press: the touch chip may not be answering, or nobody is there.
+    // Don't hang; carry on with rough defaults and ask again next boot.
+    Serial.println("touch: no press in 20s, using default calibration (not saved)");
+    tft.setTouch(DEFAULT_CAL);
+    tft.fillScreen(TFT_BLACK);
+    halSetFlip(wasFlipped);
+    return;
+  }
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.drawString("Press each corner arrow", SCREEN_W / 2, SCREEN_H / 2);
+  tft.setTextDatum(TL_DATUM);
+  Serial.println("touch: calibrating");
   tft.calibrateTouch(cal, TFT_MAGENTA, TFT_BLACK, 15);
   tft.setTouch(cal);
   _touchPrefs.begin("touch", false);
@@ -310,10 +349,12 @@ void halBegin() {
   pinMode(PIN_LED_R, OUTPUT); pinMode(PIN_LED_G, OUTPUT); pinMode(PIN_LED_B, OUTPUT);
   digitalWrite(PIN_LED_R, HIGH); digitalWrite(PIN_LED_G, HIGH); digitalWrite(PIN_LED_B, HIGH);
 
+  Serial.println("hal: ESP32-32E, starting display");
   blBegin();
   tft.init();
   tft.setRotation(0);
   tft.fillScreen(TFT_BLACK);
+  Serial.println("hal: display up, starting touch");
   touchBegin();
 
   BtnA.begin(PIN_BTN_BOOT);
