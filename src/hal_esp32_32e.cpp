@@ -443,20 +443,14 @@ void halBegin() {
   pinMode(PIN_LED_R, OUTPUT); pinMode(PIN_LED_G, OUTPUT); pinMode(PIN_LED_B, OUTPUT);
   digitalWrite(PIN_LED_R, HIGH); digitalWrite(PIN_LED_G, HIGH); digitalWrite(PIN_LED_B, HIGH);
 
-  Serial.println("hal: ESP32-32E, starting display");
   tft.init();
   tft.setRotation(TFT_BASE_ROT);
-  // Bring-up check: backlight pin driven straight high (no PWM) and the
-  // panel filled red, green, blue. Tells a dead backlight from a panel that
-  // isn't taking commands.
+  Serial.println("hal: starting display");
+#if defined(ROTATION_TEST)
+  // Bring-up for a new panel (build with -DROTATION_TEST=1): show each
+  // rotation with a frame round tft.width() x height().
   pinMode(PIN_LCD_BL, OUTPUT);
   digitalWrite(PIN_LCD_BL, HIGH);
-  Serial.println("hal: backlight forced on, filling red / green / blue");
-  tft.fillScreen(TFT_RED);   delay(400);
-  tft.fillScreen(TFT_GREEN); delay(400);
-  tft.fillScreen(TFT_BLUE);  delay(400);
-#if defined(ROTATION_TEST)
-  // Bring-up: show each rotation with a frame round tft.width() x height().
   for (int r = 0; r < 4; r++) {
     tft.setRotation(r);
     tft.fillScreen(TFT_BLACK);
@@ -477,7 +471,6 @@ void halBegin() {
 #endif
   tft.fillScreen(TFT_BLACK);
   blBegin();
-  Serial.printf("hal: backlight on PWM, pin reads %d\n", digitalRead(PIN_LCD_BL));
   Serial.println("hal: display up, starting touch");
   touchBegin();
 

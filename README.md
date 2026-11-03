@@ -81,8 +81,11 @@ pio run -e esp32-32e-28 -t upload     # or -e esp32-32e for the 3.2"
 python3 tools/flash_character.py characters/bufo esp32-32e-28
 ```
 
-- **Portrait layout.** The pet lives in the top 130px and the transcript,
-  prompts, pages and menus fill the panel below. With no PSRAM the screen is
+- **Layout.** The 2.8" runs landscape (320×240, USB on the right): the pet
+  lives in a 96px strip along the top and the transcript, prompts, pages and
+  menus fill the panel below. The 3.2" runs portrait with a 130px pet area.
+  The 2.8" panel is addressed as 320×240 rather than the ILI9341's usual
+  240×320, and needs RGB colour order; both are set in its env. With no PSRAM the screen is
   two sprites: the pet in full colour and the panel in 8-bit colour, so UI
   colours are slightly coarser than on the Waveshare.
 - **Touch-only.** The case this board ships in covers every button, so
