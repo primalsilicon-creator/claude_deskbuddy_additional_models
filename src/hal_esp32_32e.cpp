@@ -157,7 +157,9 @@ static bool touchRead(int* sx, int* sy) {
 }
 
 // Show a crosshair and wait for a press and release there. Returns the
-// averaged raw reading, or false after timeoutMs with no press.
+// averaged raw reading, or false after timeoutMs with no press. Resistive
+// reads drop out for a sample now and then mid-press, so a press only ends
+// after 100ms with no contact, and the next point waits for a clean release.
 static bool calPoint(int x, int y, uint32_t timeoutMs, uint16_t* ra, uint16_t* rb) {
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -169,22 +171,29 @@ static bool calPoint(int x, int y, uint32_t timeoutMs, uint16_t* ra, uint16_t* r
   tft.drawFastHLine(x - 12, y, 25, TFT_MAGENTA);
   tft.drawFastVLine(x, y - 12, 25, TFT_MAGENTA);
   tft.drawCircle(x, y, 6, TFT_MAGENTA);
-  uint32_t t0 = millis(), lastLog = 0, sumA = 0, sumB = 0, n = 0;
+
+  uint32_t t0 = millis(), lastLog = 0, upSince = millis(), sumA = 0, sumB = 0, n = 0;
+  bool armed = false;   // seen 200ms of no contact since the crosshair appeared
   while (millis() - t0 < timeoutMs) {
     uint16_t a, b, z;
     touchRaw(&a, &b, &z);
-    if (millis() - lastLog > 1000) {
-      lastLog = millis();
+    uint32_t now = millis();
+    bool down = z >= Z_PRESS;
+    if (now - lastLog > 1000 || (down && n == 0 && armed)) {
+      lastLog = now;
       Serial.printf("touch: raw a %u b %u z %u, irq %d\n", a, b, z, digitalRead(PIN_TOUCH_IRQ));
     }
-    if (z >= Z_PRESS) { sumA += a; sumB += b; n++; }
-    else if (n >= 5) {                   // pressed long enough, now released
+    if (down) {
+      upSince = now;
+      if (armed) { sumA += a; sumB += b; n++; }
+    } else if (!armed) {
+      if (now - upSince >= 200) armed = true;
+    } else if (n >= 5 && now - upSince >= 100) {
       *ra = sumA / n; *rb = sumB / n;
-      Serial.printf("touch: point %d,%d -> raw %u,%u\n", x, y, *ra, *rb);
-      delay(300);
+      Serial.printf("touch: point %d,%d -> raw %u,%u (%u samples)\n", x, y, *ra, *rb, n);
       return true;
     }
-    delay(15);
+    delay(10);
   }
   return false;
 }
@@ -195,9 +204,22 @@ void halTouchCalibrate() {
   halScreenOn(true);
   Serial.println("touch: calibrating (20s per point before it gives up)");
   uint16_t a1, b1, a2, b2, a3, b3;
-  bool ok = calPoint(CAL_M, CAL_M, 20000, &a1, &b1)
-         && calPoint(SCREEN_W - CAL_M, CAL_M, 20000, &a2, &b2)
-         && calPoint(CAL_M, SCREEN_H - CAL_M, 20000, &a3, &b3);
+  // A point that reads almost the same as the one before was most likely
+  // the same press; show it again.
+  auto same = [](uint16_t pa, uint16_t pb, uint16_t qa, uint16_t qb) {
+    return abs((int)pa - (int)qa) < 150 && abs((int)pb - (int)qb) < 150;
+  };
+  bool ok = calPoint(CAL_M, CAL_M, 20000, &a1, &b1);
+  for (int tries = 0; ok && tries < 3; tries++) {
+    ok = calPoint(SCREEN_W - CAL_M, CAL_M, 20000, &a2, &b2);
+    if (!ok || !same(a1, b1, a2, b2)) break;
+    Serial.println("touch: point 2 matches point 1, asking again");
+  }
+  for (int tries = 0; ok && tries < 3; tries++) {
+    ok = calPoint(CAL_M, SCREEN_H - CAL_M, 20000, &a3, &b3);
+    if (!ok || !same(a2, b2, a3, b3)) break;
+    Serial.println("touch: point 3 matches point 2, asking again");
+  }
   if (ok) {
     // Point 1 -> 2 moves along screen x only: whichever raw axis changed
     // more is screen x.

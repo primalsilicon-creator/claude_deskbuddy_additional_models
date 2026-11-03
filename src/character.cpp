@@ -142,8 +142,13 @@ bool characterInit(const char* name) {
   if (!LittleFS.begin(false)) {
     // begin() fails if already mounted — that's fine on reload
     if (!LittleFS.open("/")) {
-      Serial.println("[char] LittleFS mount failed");
-      return false;
+      // Never formatted (a fresh board, or one flashed without uploadfs):
+      // format it so characters can be installed over BLE.
+      Serial.println("[char] LittleFS mount failed, formatting");
+      if (!LittleFS.begin(true)) {
+        Serial.println("[char] LittleFS format failed");
+        return false;
+      }
     }
   }
 
