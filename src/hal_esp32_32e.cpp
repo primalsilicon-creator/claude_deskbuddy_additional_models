@@ -32,6 +32,10 @@ HalButton BtnA;   // BOOT
 HalButton BtnB;   // no button: never pressed
 
 // ───────────────────────── display ─────────────────────────
+// TFT_eSPI rotation for the upright picture; "flip" adds 180 degrees.
+#ifndef TFT_BASE_ROT
+#define TFT_BASE_ROT 0
+#endif
 static bool _flip = false;
 
 void halPush(TFT_eSprite& spr)    { spr.pushSprite(0, PET_PANE_H); }
@@ -39,7 +43,7 @@ void halPushPet(TFT_eSprite& pet) { pet.pushSprite(0, 0); }
 
 void halSetFlip(bool flipped) {
   _flip = flipped;
-  tft.setRotation(flipped ? 2 : 0);
+  tft.setRotation((TFT_BASE_ROT + (flipped ? 2 : 0)) % 4);
 }
 
 // ───────────────────────── backlight ─────────────────────────
@@ -140,6 +144,11 @@ static void touchRaw(uint16_t* a, uint16_t* b, uint16_t* z) {
 // Calibration: raw value of the screen-x axis at x=CAL_M and x=W-CAL_M,
 // of the screen-y axis at y=CAL_M and y=H-CAL_M, and whether a/b swap.
 struct TouchCal { int16_t x0, x1, y0, y1; uint8_t swap; };
+// The crosshairs sit most of a screen apart, so a good calibration spans
+// well over half the 0..4095 raw range on both axes.
+static bool calPlausible(const TouchCal& c) {
+  return abs(c.x1 - c.x0) >= 1000 && abs(c.y1 - c.y0) >= 1000;
+}
 static TouchCal _cal = { 300, 3700, 300, 3700, 0 };   // rough until calibrated
 static const int CAL_M = 24;
 
@@ -200,7 +209,7 @@ static bool calPoint(int x, int y, uint32_t timeoutMs, uint16_t* ra, uint16_t* r
 
 void halTouchCalibrate() {
   bool wasFlipped = _flip;
-  tft.setRotation(0);
+  tft.setRotation(TFT_BASE_ROT);
   halScreenOn(true);
   Serial.println("touch: calibrating (20s per point before it gives up)");
   uint16_t a1, b1, a2, b2, a3, b3;
@@ -227,7 +236,7 @@ void halTouchCalibrate() {
     c.swap = abs((int)b2 - (int)b1) > abs((int)a2 - (int)a1);
     c.x0 = c.swap ? b1 : a1;  c.x1 = c.swap ? b2 : a2;
     c.y0 = c.swap ? a1 : b1;  c.y1 = c.swap ? a3 : b3;
-    if (abs(c.x1 - c.x0) < 200 || abs(c.y1 - c.y0) < 200) {
+    if (!calPlausible(c)) {
       Serial.println("touch: calibration points too close together, ignored");
     } else {
       _cal = c;
@@ -255,11 +264,14 @@ static void touchBegin() {
   _tspi.begin(TOUCH_SPI_SCK, TOUCH_SPI_MISO, TOUCH_SPI_MOSI, -1);
 #endif
   _touchPrefs.begin("touch", true);
-  size_t n = _touchPrefs.getBytes("cal2", &_cal, sizeof(_cal));
+  TouchCal saved;
+  size_t n = _touchPrefs.getBytes("cal2", &saved, sizeof(saved));
   _touchPrefs.end();
-  if (n == sizeof(_cal)) {
+  if (n == sizeof(saved) && calPlausible(saved)) {
+    _cal = saved;
     Serial.printf("touch: calibration x %d..%d y %d..%d swap %u\n", _cal.x0, _cal.x1, _cal.y0, _cal.y1, _cal.swap);
   } else {
+    if (n == sizeof(saved)) Serial.println("touch: saved calibration looks wrong, redoing it");
     halTouchCalibrate();   // first boot
   }
 }
@@ -433,7 +445,7 @@ void halBegin() {
 
   Serial.println("hal: ESP32-32E, starting display");
   tft.init();
-  tft.setRotation(0);
+  tft.setRotation(TFT_BASE_ROT);
   // Bring-up check: backlight pin driven straight high (no PWM) and the
   // panel filled red, green, blue. Tells a dead backlight from a panel that
   // isn't taking commands.
@@ -459,9 +471,9 @@ void halBegin() {
     tft.drawString(b, tft.width() / 2, tft.height() / 2 + 14, 2);
     tft.setTextDatum(TL_DATUM);
     Serial.printf("hal: rotation test R%d (%dx%d)\n", r, tft.width(), tft.height());
-    delay(3000);
+    delay(5000);
   }
-  tft.setRotation(0);
+  tft.setRotation(TFT_BASE_ROT);
 #endif
   tft.fillScreen(TFT_BLACK);
   blBegin();

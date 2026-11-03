@@ -79,14 +79,23 @@ static const int PET_PANE_W = 200;
 static const int PET_PANE_H = SCREEN_H;
 static const bool TOUCH_ONLY = false;
 #else
-// Portrait 240x320. With no PSRAM a full-screen 16-bit sprite (150KB) does
+// Portrait 240x320 (or landscape, below). With no PSRAM a full-screen 16-bit sprite (150KB) does
 // not fit next to BLE, so the screen is two sprites: the pet in full colour
 // across the top PET_PANE_H rows, and the panel (transcript, approvals,
 // menus...) below it in an 8-bit sprite.
+#if defined(SCREEN_LANDSCAPE)
+// Landscape 320x240 (2.8" board as it sits in its case): the same stacked
+// layout, with a short wide pet strip on top.
+static const int SCREEN_W = 320;
+static const int SCREEN_H = 240;
+static const int PET_PANE_W = 320;
+static const int PET_PANE_H = 96;
+#else
 static const int SCREEN_W = 240;
 static const int SCREEN_H = 320;
 static const int PET_PANE_W = 240;
 static const int PET_PANE_H = 130;
+#endif
 static const int PANEL_SPR_H = SCREEN_H - PET_PANE_H;
 static const bool TOUCH_ONLY = true;
 #endif

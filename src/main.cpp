@@ -344,7 +344,7 @@ static void drawMenuHints(const Palette& p, int mx, int mw, int hy,
 // a long press closes the menu.
 const int GRID_TOP = 20, GRID_GAP = 4;
 static void gridCell(uint8_t n, uint8_t i, int* x, int* y, int* w, int* h) {
-  int cols = n > 3 ? 2 : 1, rows = (n + cols - 1) / cols;
+  int cols = n > 3 ? (W > 280 ? 3 : 2) : 1, rows = (n + cols - 1) / cols;
   int cw = (W - (cols - 1) * GRID_GAP) / cols;
   int ch = (H - GRID_TOP - (rows - 1) * GRID_GAP) / rows;
   if (ch > 44) ch = 44;

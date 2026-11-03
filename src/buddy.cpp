@@ -11,7 +11,7 @@ enum { B_SLEEP, B_IDLE, B_BUSY, B_ATTENTION, B_CELEBRATE, B_DIZZY, B_HEART };
 // ──────────────── shared geometry ────────────────
 const int BUDDY_X_CENTER = PET_PANE_W / 2;   // centre of the pet pane
 const int BUDDY_CANVAS_W = PET_PANE_W;
-const int BUDDY_Y_BASE   = 30;
+const int BUDDY_Y_BASE   = PET_PANE_H < 120 ? 16 : 30;   // short pet strip: sit higher
 const int BUDDY_Y_OVERLAY = 6;
 const int BUDDY_CHAR_W   = 6;
 const int BUDDY_CHAR_H   = 8;
