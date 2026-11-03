@@ -350,10 +350,20 @@ void halBegin() {
   digitalWrite(PIN_LED_R, HIGH); digitalWrite(PIN_LED_G, HIGH); digitalWrite(PIN_LED_B, HIGH);
 
   Serial.println("hal: ESP32-32E, starting display");
-  blBegin();
   tft.init();
   tft.setRotation(0);
+  // Bring-up check: backlight pin driven straight high (no PWM) and the
+  // panel filled red, green, blue. Tells a dead backlight from a panel that
+  // isn't taking commands.
+  pinMode(PIN_LCD_BL, OUTPUT);
+  digitalWrite(PIN_LCD_BL, HIGH);
+  Serial.println("hal: backlight forced on, filling red / green / blue");
+  tft.fillScreen(TFT_RED);   delay(800);
+  tft.fillScreen(TFT_GREEN); delay(800);
+  tft.fillScreen(TFT_BLUE);  delay(800);
   tft.fillScreen(TFT_BLACK);
+  blBegin();
+  Serial.printf("hal: backlight on PWM, pin reads %d\n", digitalRead(PIN_LCD_BL));
   // RDDID over the shared MISO line. All zeros (or all FF) means reads
   // aren't getting back, which would also break touch.
   Serial.printf("hal: display up (id %02X %02X %02X), starting touch\n",
