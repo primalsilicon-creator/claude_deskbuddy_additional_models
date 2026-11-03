@@ -443,6 +443,26 @@ void halBegin() {
   tft.fillScreen(TFT_RED);   delay(400);
   tft.fillScreen(TFT_GREEN); delay(400);
   tft.fillScreen(TFT_BLUE);  delay(400);
+#if defined(ROTATION_TEST)
+  // Bring-up: show each rotation with a frame round tft.width() x height().
+  for (int r = 0; r < 4; r++) {
+    tft.setRotation(r);
+    tft.fillScreen(TFT_BLACK);
+    tft.drawRect(0, 0, tft.width(), tft.height(), TFT_WHITE);
+    tft.drawRect(2, 2, tft.width() - 4, tft.height() - 4, TFT_WHITE);
+    tft.fillTriangle(6, 6, 40, 6, 6, 40, TFT_RED);          // marks (0,0)
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    char b[8]; snprintf(b, sizeof(b), "R%d", r);
+    tft.drawString(b, tft.width() / 2, tft.height() / 2 - 20, 4);
+    snprintf(b, sizeof(b), "%dx%d", tft.width(), tft.height());
+    tft.drawString(b, tft.width() / 2, tft.height() / 2 + 14, 2);
+    tft.setTextDatum(TL_DATUM);
+    Serial.printf("hal: rotation test R%d (%dx%d)\n", r, tft.width(), tft.height());
+    delay(3000);
+  }
+  tft.setRotation(0);
+#endif
   tft.fillScreen(TFT_BLACK);
   blBegin();
   Serial.printf("hal: backlight on PWM, pin reads %d\n", digitalRead(PIN_LCD_BL));
