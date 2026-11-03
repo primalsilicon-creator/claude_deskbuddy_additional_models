@@ -12,7 +12,11 @@
 // initialised, so it never touches any pins.
 // ESP32-32E: `tft` is the real ST7789 driver. `spr` is the panel below the
 // pet (8-bit to save RAM) and `petSpr` is the pet pane in full colour.
+#if defined(TFT_PANEL_W)
+TFT_eSPI tft(TFT_PANEL_W, TFT_PANEL_H);   // panel size the driver header can't express
+#else
 TFT_eSPI tft;
+#endif
 TFT_eSprite spr = TFT_eSprite(&tft);
 #if defined(BOARD_ESP32_32E)
 static TFT_eSprite _petSprite = TFT_eSprite(&tft);
