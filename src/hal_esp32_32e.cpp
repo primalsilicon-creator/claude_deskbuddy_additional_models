@@ -354,7 +354,10 @@ void halBegin() {
   tft.init();
   tft.setRotation(0);
   tft.fillScreen(TFT_BLACK);
-  Serial.println("hal: display up, starting touch");
+  // RDDID over the shared MISO line. All zeros (or all FF) means reads
+  // aren't getting back, which would also break touch.
+  Serial.printf("hal: display up (id %02X %02X %02X), starting touch\n",
+                tft.readcommand8(0x04, 1), tft.readcommand8(0x04, 2), tft.readcommand8(0x04, 3));
   touchBegin();
 
   BtnA.begin(PIN_BTN_BOOT);

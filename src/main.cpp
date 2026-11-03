@@ -2,6 +2,7 @@
 #include <LittleFS.h>
 #include <stdarg.h>
 #include <esp_heap_caps.h>
+#include <esp_bt.h>
 #include "ble_bridge.h"
 #include "data.h"
 #include "buddy.h"
@@ -1197,27 +1198,38 @@ static void actionB(bool inPrompt) {
 
 void setup() {
   Serial.begin(115200);
+#if defined(BOARD_ESP32_32E)
+  // BLE only: hand the classic-BT controller memory back to the heap now,
+  // before anything else allocates. (BLEDevice::init does this too, but
+  // only after the heap has been carved up.)
+  esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+#endif
   halBegin();          // latches battery power, brings up panel, I2C, buttons
 #if defined(BOARD_WAVESHARE_349)
   // 640x172x2 = 220KB: TFT_eSprite puts it in PSRAM.
   if (!spr.createSprite(SCREEN_W, SCREEN_H)) {
     Serial.println("FATAL: could not allocate the frame sprite (PSRAM enabled?)");
   }
-#else
-  // No PSRAM: allocate the frame sprites before BLE takes its share of the
-  // heap. Pet 240x130 at 16 bits (61KB), panel 240x190 at 8 bits (45KB).
+#endif
+  startBt();
+#if defined(BOARD_ESP32_32E)
+  // No PSRAM. Bluedroid needs its heap first (allocating the sprites before
+  // it crashed BLE start), then the frame sprites take what's left: pet
+  // 240x130 at 16 bits (61KB) if it fits, else 8 bits; panel 240x190 at
+  // 8 bits (45KB).
+  Serial.printf("ble up: heap free %u, largest block %u\n",
+                ESP.getFreeHeap(), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+  spr.setColorDepth(8);
+  if (!spr.createSprite(SCREEN_W, PANEL_SPR_H)) Serial.println("FATAL: no panel sprite");
   petSpr.setColorDepth(16);
   if (!petSpr.createSprite(PET_PANE_W, PET_PANE_H)) {
     Serial.println("pet sprite: no room at 16 bits, trying 8");
     petSpr.setColorDepth(8);
     if (!petSpr.createSprite(PET_PANE_W, PET_PANE_H)) Serial.println("FATAL: no pet sprite");
   }
-  spr.setColorDepth(8);
-  if (!spr.createSprite(SCREEN_W, PANEL_SPR_H)) Serial.println("FATAL: no panel sprite");
   Serial.printf("sprites: heap free %u, largest block %u\n",
                 ESP.getFreeHeap(), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 #endif
-  startBt();
   statsLoad();
   settingsLoad();
   halSetFlip(settings().clockRot == 1);
