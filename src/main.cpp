@@ -787,8 +787,8 @@ void drawInfo() {
     ln("Waveshare ESP32-S3");
     ln("Touch-LCD-3.49 (V2)");
 #else
-    ln("LCDwiki 3.2inch");
-    ln("ESP32-32E display");
+    ln("LCDwiki ESP32-32E");
+    ln("display");
 #endif
   }
 }

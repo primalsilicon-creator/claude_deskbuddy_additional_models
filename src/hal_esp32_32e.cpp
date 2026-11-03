@@ -1,16 +1,20 @@
 #include "hal.h"
 #if defined(BOARD_ESP32_32E)
-// LCDwiki 3.2inch ESP32-32E (E32R32P with touch / E32N32P without). See
-// hal.h for the pin map. TFT_eSPI drives the ST7789 and the XPT2046 touch
-// controller on the shared SPI bus; the pins come from the build flags in
-// platformio.ini.
+// LCDwiki ESP32-32E displays. See hal.h for the pin maps. TFT_eSPI drives
+// the panel (pins from the build flags in platformio.ini). The XPT2046
+// touch chip is read here: on the 3.2" it shares the LCD's SPI bus and is
+// read through TFT_eSPI, on the 2.8" it has its own pins (TOUCH_SPI_SEPARATE).
 #include <Preferences.h>
+#include <SPI.h>
 #include <esp_sleep.h>
 #include <sys/time.h>
 #include <time.h>
 
 // ───────────────────────── pins ─────────────────────────
-static const int PIN_LCD_BL   = 27;   // active high
+#ifndef LCD_BL_PIN
+#define LCD_BL_PIN 27                 // 3.2"; the 2.8" uses 21
+#endif
+static const int PIN_LCD_BL   = LCD_BL_PIN;   // active high
 static const int PIN_TOUCH_IRQ = 36;  // XPT2046 PENIRQ, low while touched
 static const int PIN_BTN_BOOT = 0;
 static const int PIN_BAT_ADC  = 34;
@@ -91,9 +95,10 @@ void HalButton::update() {
 }
 
 // ───────────────────────── touch ─────────────────────────
-// Resistive, so it needs calibrating. TFT_eSPI's calibrateTouch() returns
-// five values that are saved to NVS. Calibration always runs at rotation 0;
-// when the picture is flipped, the point is mirrored here instead.
+// Resistive, so it needs calibrating. Three crosshairs give the raw reading
+// at known points, which also shows whether the panel's axes are swapped or
+// mirrored. The result is saved to NVS. Calibration always runs at rotation
+// 0; when the picture is flipped, the point is mirrored here instead.
 static Preferences _touchPrefs;
 static bool _touchDown = false, _tapPending = false, _longPending = false, _longFired = false;
 static int  _downX = 0, _downY = 0, _lastX = 0, _lastY = 0;
@@ -101,80 +106,137 @@ static int  _tapX = 0, _tapY = 0;
 static uint32_t _downSince = 0, _lastTouchPoll = 0, _lastSeenDown = 0;
 static const uint32_t LONG_PRESS_MS = 600;
 static const int TAP_SLOP_PX = 24;    // more movement than this isn't a tap
+static const uint16_t Z_PRESS = 300;  // pressure needed to count as a touch
 
-// Generic XPT2046 values, used until a calibration is saved. Rough, but
-// enough to reach settings > touch cal.
-static uint16_t DEFAULT_CAL[5] = { 300, 3500, 300, 3500, 0 };
+#if defined(TOUCH_SPI_SEPARATE)
+static SPIClass _tspi(VSPI);
+static uint16_t xptRead(uint8_t cmd) {
+  _tspi.transfer(cmd);
+  return _tspi.transfer16(0) >> 3;
+}
+#endif
 
-// Wait up to ms for a firm press and its release, logging raw readings so
-// a dead touch chip shows up on serial. True if the screen was pressed.
-static bool waitForPress(uint32_t ms) {
-  uint32_t t0 = millis(), lastLog = 0;
-  bool pressed = false;
-  while (millis() - t0 < ms) {
-    uint16_t z = tft.getTouchRawZ();
-    if (millis() - lastLog > 500) {
+// Raw 12-bit readings and pressure. a and b are the chip's two axes, which
+// may be either way round relative to the screen.
+static void touchRaw(uint16_t* a, uint16_t* b, uint16_t* z) {
+#if defined(TOUCH_SPI_SEPARATE)
+  _tspi.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(TOUCH_SPI_CS, LOW);
+  int z1 = xptRead(0xB1), z2 = xptRead(0xC1);
+  int zz = z1 + 4095 - z2;
+  *z = (z1 == 0) ? 0 : (zz < 0 ? 0 : zz);
+  xptRead(0xD1);                                   // first sample is noisy
+  *a = (xptRead(0xD1) + xptRead(0xD1)) / 2;
+  *b = (xptRead(0x91) + xptRead(0x91)) / 2;
+  xptRead(0xD0);                                   // power down, PENIRQ on
+  digitalWrite(TOUCH_SPI_CS, HIGH);
+  _tspi.endTransaction();
+#else
+  *z = tft.getTouchRawZ();
+  tft.getTouchRaw(a, b);
+#endif
+}
+
+// Calibration: raw value of the screen-x axis at x=CAL_M and x=W-CAL_M,
+// of the screen-y axis at y=CAL_M and y=H-CAL_M, and whether a/b swap.
+struct TouchCal { int16_t x0, x1, y0, y1; uint8_t swap; };
+static TouchCal _cal = { 300, 3700, 300, 3700, 0 };   // rough until calibrated
+static const int CAL_M = 24;
+
+static bool touchRead(int* sx, int* sy) {
+  uint16_t a, b, z;
+  touchRaw(&a, &b, &z);
+  if (z < Z_PRESS) return false;
+  int rx = _cal.swap ? b : a, ry = _cal.swap ? a : b;
+  if (_cal.x1 == _cal.x0 || _cal.y1 == _cal.y0) return false;
+  int x = CAL_M + (rx - _cal.x0) * (SCREEN_W - 2 * CAL_M) / (_cal.x1 - _cal.x0);
+  int y = CAL_M + (ry - _cal.y0) * (SCREEN_H - 2 * CAL_M) / (_cal.y1 - _cal.y0);
+  *sx = constrain(x, 0, SCREEN_W - 1);
+  *sy = constrain(y, 0, SCREEN_H - 1);
+  return true;
+}
+
+// Show a crosshair and wait for a press and release there. Returns the
+// averaged raw reading, or false after timeoutMs with no press.
+static bool calPoint(int x, int y, uint32_t timeoutMs, uint16_t* ra, uint16_t* rb) {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextFont(2);
+  tft.drawString("Touch calibration", SCREEN_W / 2, SCREEN_H / 2 - 10);
+  tft.drawString("Press the + firmly", SCREEN_W / 2, SCREEN_H / 2 + 10);
+  tft.setTextDatum(TL_DATUM);
+  tft.drawFastHLine(x - 12, y, 25, TFT_MAGENTA);
+  tft.drawFastVLine(x, y - 12, 25, TFT_MAGENTA);
+  tft.drawCircle(x, y, 6, TFT_MAGENTA);
+  uint32_t t0 = millis(), lastLog = 0, sumA = 0, sumB = 0, n = 0;
+  while (millis() - t0 < timeoutMs) {
+    uint16_t a, b, z;
+    touchRaw(&a, &b, &z);
+    if (millis() - lastLog > 1000) {
       lastLog = millis();
-      uint16_t rx = 0, ry = 0; tft.getTouchRaw(&rx, &ry);
-      Serial.printf("touch: raw x %u y %u z %u, irq %d\n", rx, ry, z, digitalRead(PIN_TOUCH_IRQ));
+      Serial.printf("touch: raw a %u b %u z %u, irq %d\n", a, b, z, digitalRead(PIN_TOUCH_IRQ));
     }
-    if (z > 400) pressed = true;
-    else if (pressed) return true;   // released
-    delay(20);
+    if (z >= Z_PRESS) { sumA += a; sumB += b; n++; }
+    else if (n >= 5) {                   // pressed long enough, now released
+      *ra = sumA / n; *rb = sumB / n;
+      Serial.printf("touch: point %d,%d -> raw %u,%u\n", x, y, *ra, *rb);
+      delay(300);
+      return true;
+    }
+    delay(15);
   }
   return false;
 }
 
 void halTouchCalibrate() {
-  uint16_t cal[5];
   bool wasFlipped = _flip;
   tft.setRotation(0);
   halScreenOn(true);
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextFont(2);
-  tft.drawString("Touch calibration", SCREEN_W / 2, SCREEN_H / 2 - 30);
-  tft.drawString("Press firmly to start,", SCREEN_W / 2, SCREEN_H / 2 - 6);
-  tft.drawString("then press each corner arrow", SCREEN_W / 2, SCREEN_H / 2 + 14);
-  tft.drawString("(skips in 20s)", SCREEN_W / 2, SCREEN_H / 2 + 40);
-  tft.setTextDatum(TL_DATUM);
-  Serial.println("touch: waiting for a press to start calibration");
-  if (!waitForPress(20000)) {
-    // No press: the touch chip may not be answering, or nobody is there.
-    // Don't hang; carry on with rough defaults and ask again next boot.
-    Serial.println("touch: no press in 20s, using default calibration (not saved)");
-    tft.setTouch(DEFAULT_CAL);
-    tft.fillScreen(TFT_BLACK);
-    halSetFlip(wasFlipped);
-    return;
+  Serial.println("touch: calibrating (20s per point before it gives up)");
+  uint16_t a1, b1, a2, b2, a3, b3;
+  bool ok = calPoint(CAL_M, CAL_M, 20000, &a1, &b1)
+         && calPoint(SCREEN_W - CAL_M, CAL_M, 20000, &a2, &b2)
+         && calPoint(CAL_M, SCREEN_H - CAL_M, 20000, &a3, &b3);
+  if (ok) {
+    // Point 1 -> 2 moves along screen x only: whichever raw axis changed
+    // more is screen x.
+    TouchCal c;
+    c.swap = abs((int)b2 - (int)b1) > abs((int)a2 - (int)a1);
+    c.x0 = c.swap ? b1 : a1;  c.x1 = c.swap ? b2 : a2;
+    c.y0 = c.swap ? a1 : b1;  c.y1 = c.swap ? a3 : b3;
+    if (abs(c.x1 - c.x0) < 200 || abs(c.y1 - c.y0) < 200) {
+      Serial.println("touch: calibration points too close together, ignored");
+    } else {
+      _cal = c;
+      _touchPrefs.begin("touch", false);
+      _touchPrefs.putBytes("cal2", &_cal, sizeof(_cal));
+      _touchPrefs.end();
+      Serial.printf("touch: calibrated x %d..%d y %d..%d swap %u\n", c.x0, c.x1, c.y0, c.y1, c.swap);
+    }
+  } else {
+    // Nothing pressed: the chip may not be answering, or nobody is there.
+    // Carry on with rough defaults and ask again next boot.
+    Serial.println("touch: no press, using default calibration (not saved)");
   }
   tft.fillScreen(TFT_BLACK);
-  tft.setTextDatum(MC_DATUM);
-  tft.drawString("Press each corner arrow", SCREEN_W / 2, SCREEN_H / 2);
-  tft.setTextDatum(TL_DATUM);
-  Serial.println("touch: calibrating");
-  tft.calibrateTouch(cal, TFT_MAGENTA, TFT_BLACK, 15);
-  tft.setTouch(cal);
-  _touchPrefs.begin("touch", false);
-  _touchPrefs.putBytes("cal", cal, sizeof(cal));
-  _touchPrefs.end();
-  Serial.printf("touch: calibrated %u %u %u %u %u\n", cal[0], cal[1], cal[2], cal[3], cal[4]);
-  tft.fillScreen(TFT_BLACK);
   halSetFlip(wasFlipped);
-  // The press on the last arrow is still down; don't count it as a tap.
+  // The last press may still be down; don't count it as a tap.
   _touchDown = true; _longFired = true;
 }
 
 static void touchBegin() {
   pinMode(PIN_TOUCH_IRQ, INPUT);
-  uint16_t cal[5];
+#if defined(TOUCH_SPI_SEPARATE)
+  pinMode(TOUCH_SPI_CS, OUTPUT);
+  digitalWrite(TOUCH_SPI_CS, HIGH);
+  _tspi.begin(TOUCH_SPI_SCK, TOUCH_SPI_MISO, TOUCH_SPI_MOSI, -1);
+#endif
   _touchPrefs.begin("touch", true);
-  size_t n = _touchPrefs.getBytes("cal", cal, sizeof(cal));
+  size_t n = _touchPrefs.getBytes("cal2", &_cal, sizeof(_cal));
   _touchPrefs.end();
-  if (n == sizeof(cal)) {
-    tft.setTouch(cal);
-    Serial.printf("touch: calibration %u %u %u %u %u\n", cal[0], cal[1], cal[2], cal[3], cal[4]);
+  if (n == sizeof(_cal)) {
+    Serial.printf("touch: calibration x %d..%d y %d..%d swap %u\n", _cal.x0, _cal.x1, _cal.y0, _cal.y1, _cal.swap);
   } else {
     halTouchCalibrate();   // first boot
   }
@@ -185,11 +247,9 @@ static void touchPoll() {
   if (now - _lastTouchPoll < 20) return;
   _lastTouchPoll = now;
 
-  uint16_t x = 0, y = 0;
-  // getTouch() averages several reads and rejects light presses.
-  bool down = tft.getTouch(&x, &y, 400);
+  int sx = 0, sy = 0;
+  bool down = touchRead(&sx, &sy);
   if (down) {
-    int sx = x, sy = y;
     if (_flip) { sx = SCREEN_W - 1 - sx; sy = SCREEN_H - 1 - sy; }
     _lastX = sx; _lastY = sy;
     _lastSeenDown = now;
@@ -358,16 +418,13 @@ void halBegin() {
   pinMode(PIN_LCD_BL, OUTPUT);
   digitalWrite(PIN_LCD_BL, HIGH);
   Serial.println("hal: backlight forced on, filling red / green / blue");
-  tft.fillScreen(TFT_RED);   delay(800);
-  tft.fillScreen(TFT_GREEN); delay(800);
-  tft.fillScreen(TFT_BLUE);  delay(800);
+  tft.fillScreen(TFT_RED);   delay(400);
+  tft.fillScreen(TFT_GREEN); delay(400);
+  tft.fillScreen(TFT_BLUE);  delay(400);
   tft.fillScreen(TFT_BLACK);
   blBegin();
   Serial.printf("hal: backlight on PWM, pin reads %d\n", digitalRead(PIN_LCD_BL));
-  // RDDID over the shared MISO line. All zeros (or all FF) means reads
-  // aren't getting back, which would also break touch.
-  Serial.printf("hal: display up (id %02X %02X %02X), starting touch\n",
-                tft.readcommand8(0x04, 1), tft.readcommand8(0x04, 2), tft.readcommand8(0x04, 3));
+  Serial.println("hal: display up, starting touch");
   touchBegin();
 
   BtnA.begin(PIN_BTN_BOOT);

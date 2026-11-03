@@ -63,18 +63,22 @@ including touch coordinates and whether the IMU was found.
 - Lying the board **face down** dims it (nap). The firmware treats however
   the board is lying at power-on as face up, so boot it face up or standing.
 
-## LCDwiki 3.2" ESP32-32E
+## LCDwiki ESP32-32E (2.8" and 3.2")
 
-The same firmware also builds for the **LCDwiki 3.2inch ESP32-32E display**
-(E32R32P with touch, E32N32P without;
-[wiki](https://www.lcdwiki.com/3.2inch_ESP32-32E_Display)). Board code is
-in `src/hal_esp32_32e.cpp`. It is a classic ESP32 with 4MB flash and no
-PSRAM, an ST7789 240×320 IPS panel and XPT2046 resistive touch.
+The same firmware also builds for the LCDwiki ESP32-32E displays. Board
+code is in `src/hal_esp32_32e.cpp`. Both are a classic ESP32 with 4MB
+flash and no PSRAM, a 240×320 panel and XPT2046 resistive touch. Pick the
+env for your board, because the screen chip and pins differ:
+
+| Board | Env | Panel | Notes |
+| ----- | --- | ----- | ----- |
+| [2.8inch](https://www.lcdwiki.com/2.8inch_ESP32-32E_Display) (E32R28T, also sold as "ZLX") | `esp32-32e-28` | ILI9341V | backlight IO21, touch on its own pins |
+| [3.2inch](https://www.lcdwiki.com/3.2inch_ESP32-32E_Display) (E32R32P) | `esp32-32e` | ST7789 IPS | backlight IO27, touch shares the LCD bus |
 
 ```bash
-pio run -e esp32-32e -t upload
+pio run -e esp32-32e-28 -t upload     # or -e esp32-32e for the 3.2"
 # optional, the bufo GIF character over USB (or send it from the desktop):
-python3 tools/flash_character.py characters/bufo esp32-32e
+python3 tools/flash_character.py characters/bufo esp32-32e-28
 ```
 
 - **Portrait layout.** The pet lives in the top 130px and the transcript,
@@ -91,8 +95,8 @@ python3 tools/flash_character.py characters/bufo esp32-32e
   | **Hold anywhere**        | menu (tap a button to pick it, tap the pet or hold to close) | |
 
   BOOT still works as the A button if you can reach it.
-- **Touch calibration.** On first boot it asks you to press four corner
-  arrows. Redo it any time from **settings → touch cal**.
+- **Touch calibration.** On first boot it asks you to press three
+  crosshairs (it gives up after 20s per point and uses rough defaults). Redo it any time from **settings → touch cal**.
 - **No IMU,** so no shake or face-down nap. Instead, a screen-off of a
   minute or more on battery counts as a nap.
 - **No clock chip.** The time comes from the desktop and is kept in the
@@ -105,8 +109,8 @@ python3 tools/flash_character.py characters/bufo esp32-32e
 
 Things to check on first boot:
 
-- If red and blue are swapped, uncomment `-DTFT_RGB_ORDER=TFT_BGR` in the
-  `esp32-32e` env of `platformio.ini`.
+- If red and blue are swapped or the colours look inverted, there are
+  commented-out flags for that in each env of `platformio.ini`.
 - The serial log prints free heap after the sprites and after BLE start. If
   BLE fails to start, that number is the first thing to look at.
 - The battery reading assumes a 1/2 divider on IO34. If DEVICE info shows

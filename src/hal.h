@@ -6,7 +6,7 @@
 //
 //   BOARD_WAVESHARE_349  Waveshare ESP32-S3-Touch-LCD-3.49 / 3.49B, V2
 //                        board (PCB "Rev1.1"). The default if none is set.
-//   BOARD_ESP32_32E      LCDwiki 3.2inch ESP32-32E (E32R32P / E32N32P).
+//   BOARD_ESP32_32E      LCDwiki 3.2" or 2.8" ESP32-32E (E32R32P / E32R28T).
 //
 // ── Waveshare 3.49 V2 (hal_waveshare349.cpp) ──
 // Pin map (from waveshareteam/ESP32-S3-Touch-LCD-3.49-V2 user_config.h):
@@ -31,6 +31,9 @@
 //   RGB LED (active low) R 22  G 16  B 17
 //   Speaker: DAC IO26 into an FM8002E amp, amp enable IO4 (low = on)
 //   Battery ADC IO34, BOOT button IO0. No IMU, no RTC chip.
+// 2.8" version (E32R28T, env esp32-32e-28, from lcdwiki.com/2.8inch_ESP32-32E_Display):
+//   same as above except an ILI9341V panel, backlight IO21, and the touch
+//   chip on its own pins: SCK 25, MOSI 32, MISO 39, CS 33, IRQ 36.
 // Many cases for this board cover every button, so it is run touch-only:
 // tap to act, long-press for the menu.
 
