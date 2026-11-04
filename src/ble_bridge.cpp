@@ -1,4 +1,5 @@
 #include "ble_bridge.h"
+#include "board_id.h"
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -116,6 +117,18 @@ void bleInit(const char* deviceName) {
   rxChar->setCallbacks(new RxCallbacks());
 
   svc->start();
+
+  // Standard Device Information Service, so any BLE scanner (nRF Connect,
+  // LightBlue, the OS Bluetooth panel) can read which board this is without
+  // pairing. Model = BOARD_MODEL from platformio.ini, serial = short MAC ID.
+  BLEService* dis = server->createService(BLEUUID((uint16_t)0x180A));
+  dis->createCharacteristic(BLEUUID((uint16_t)0x2A24),   // Model Number String
+                            BLECharacteristic::PROPERTY_READ)->setValue(std::string(BOARD_MODEL));
+  dis->createCharacteristic(BLEUUID((uint16_t)0x2A25),   // Serial Number String
+                            BLECharacteristic::PROPERTY_READ)->setValue(std::string(boardShortId()));
+  dis->createCharacteristic(BLEUUID((uint16_t)0x2A29),   // Manufacturer Name String
+                            BLECharacteristic::PROPERTY_READ)->setValue(std::string(ESP.getChipModel()));
+  dis->start();
 
   BLESecurity* sec = new BLESecurity();
   sec->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);

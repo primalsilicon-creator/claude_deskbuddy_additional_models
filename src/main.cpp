@@ -4,6 +4,7 @@
 #include <esp_heap_caps.h>
 #include <esp_bt.h>
 #include "ble_bridge.h"
+#include "board_id.h"
 #include "data.h"
 #include "buddy.h"
 
@@ -30,9 +31,9 @@ TFT_eSprite& petSpr = spr;
 // btName for the BLUETOOTH info page.
 static char btName[16] = "Claude";
 static void startBt() {
-  uint8_t mac[6] = {0};
-  esp_read_mac(mac, ESP_MAC_BT);
-  snprintf(btName, sizeof(btName), "Claude-%02X%02X", mac[4], mac[5]);
+  // The desktop only lists devices whose name starts with "Claude", so the
+  // board's short ID goes after that prefix.
+  snprintf(btName, sizeof(btName), "Claude-%s", boardShortId());
   bleInit(btName);
 }
 
@@ -742,6 +743,10 @@ void drawInfo() {
     spr.setTextSize(2);
     spr.setCursor(4, y);
     spr.print(linked ? "linked" : "discover");
+    // This unit's short ID, big enough to read across a desk.
+    spr.setTextColor(p.text, p.bg);
+    spr.setCursor(W - 4 - 4 * 12, y);
+    spr.print(boardShortId());
     spr.setTextSize(1);
     y += 20;
 
@@ -749,10 +754,8 @@ void drawInfo() {
     spr.setTextColor(p.text, p.bg);
     ln("  %s", btName);
     spr.setTextColor(p.textDim, p.bg);
-    uint8_t mac[6] = {0};
-    esp_read_mac(mac, ESP_MAC_BT);
-    ln("  %02X:%02X:%02X:%02X:%02X:%02X",
-       mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+    ln("  %s", boardMacStr());
+    ln("  %s", BOARD_MODEL);
     y += 8;
 
     if (linked) {
@@ -787,13 +790,8 @@ void drawInfo() {
     spr.setTextColor(p.textDim, p.bg);
     ln("hardware");
     y += 4;
-#if defined(BOARD_WAVESHARE_349)
-    ln("Waveshare ESP32-S3");
-    ln("Touch-LCD-3.49 (V2)");
-#else
-    ln("LCDwiki ESP32-32E");
-    ln("display");
-#endif
+    ln("%s", BOARD_MODEL);
+    ln("%s  id %s", ESP.getChipModel(), boardShortId());
   }
 }
 
@@ -1209,6 +1207,7 @@ void setup() {
   esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
 #endif
   halBegin();          // latches battery power, brings up panel, I2C, buttons
+  boardPrintInfo(Serial);
 #if defined(BOARD_WAVESHARE_349)
   // 640x172x2 = 220KB: TFT_eSprite puts it in PSRAM.
   if (!spr.createSprite(SCREEN_W, SCREEN_H)) {
@@ -1267,6 +1266,16 @@ void setup() {
       spr.setTextSize(2);
       spr.setTextColor(p.textDim, p.bg);
       spr.drawString("a buddy appears", MSG_CX, MSG_CY + 20);
+    }
+    // Board model and this unit's ID along the bottom, so it's obvious at
+    // power-on which board is which.
+    spr.setTextSize(1);
+    spr.setTextColor(p.textDim, p.bg);
+    {
+      char line[48];
+      snprintf(line, sizeof(line), "%s  -  %s", BOARD_MODEL, boardShortId());
+      spr.setTextDatum(BC_DATUM);
+      spr.drawString(line, MSG_CX, 2 * MSG_CY - PANEL_BOTTOM - 2);
     }
     spr.setTextDatum(TL_DATUM); spr.setTextSize(1);
     pushFrame();

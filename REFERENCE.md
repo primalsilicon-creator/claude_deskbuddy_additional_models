@@ -133,6 +133,7 @@ generic counter (e.g. bytes written for chunk acks, otherwise 0).
 | Command                          | Payload                  | Ack you send back            |
 | -------------------------------- | ------------------------ | ---------------------------- |
 | `{"cmd":"status"}`               | —                        | see Status response below    |
+| `{"cmd":"board"}`                | —                        | `{"ack":"board","ok":true,"data":{"model":"Waveshare 3.49B V2","chip":"ESP32-S3","id":"A1B2","mac":"…"}}` |
 | `{"cmd":"name","name":"Clawd"}`  | sets device display name | `{"ack":"name","ok":true}`   |
 | `{"cmd":"owner","name":"Felix"}` | sets owner name          | `{"ack":"owner","ok":true}`  |
 | `{"cmd":"unpair"}`               | erase stored BLE bonds   | `{"ack":"unpair","ok":true}` |
@@ -155,6 +156,13 @@ populate the Hardware Buddy window's stats panel:
 ```
 
 You can omit fields you don't have. `bat.mA` negative means charging.
+
+This port also adds `"board": {"model", "chip", "id", "mac"}` to the status
+`data`. `model` is the `BOARD_MODEL` build flag from the PlatformIO env,
+`id` is the last four hex digits of the Bluetooth MAC (the same suffix as the
+`Claude-XXXX` BLE name). The same line is printed on USB serial at boot, and
+the BLE Device Information Service (0x180A) carries the model (0x2A24) and
+ID (0x2A25), readable without pairing.
 
 ## Folder push
 
