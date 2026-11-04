@@ -20,12 +20,13 @@ characters are unchanged. What changed:
 
   |                  | Normal              | Approval          |
   | ---------------- | ------------------- | ----------------- |
-  | **PWR** (A, middle)          | next screen         | **approve**       |
-  | **BOOT** (B, backlight icon) | scroll / next page  | **deny**          |
+  | **PWR** (A, middle)          | next tab            | **approve**       |
+  | **BOOT** (B, backlight icon) | scroll / next page (dash: open session) | **deny** |
   | **Hold PWR**                 | menu                | menu              |
   | **Hold BOOT 3s**             | power off           | power off         |
   | **Tap pet**                  | same as PWR         |                   |
-  | **Tap panel**                | same as BOOT        | tap Approve / Deny buttons |
+  | **Tap a tab**                | open that tab       |                   |
+  | **Tap panel**                | session / log: top half older, bottom half newer; elsewhere same as BOOT | tap Approve / Deny buttons |
 
   This matches the M5StickC Plus: the big middle button is A.
 
@@ -36,12 +37,29 @@ characters are unchanged. What changed:
   onboard speaker (settings → sound).
 - **Settings → flip** turns the picture 180° if it comes up upside down
   in your case.
+- **Tabs: dash, session, log, pet, info.** The panel opens on a
+  statistics dashboard: running / waiting / tokens today / turn timer
+  tiles, a chart of output tokens per 5 minutes over the last 2 hours, the
+  most used tools, and what Claude is doing right now. **Session** is a
+  feed built from the desktop's turn events: your messages, Claude's
+  replies, and each tool call with a status dot (yellow running, green
+  done, red error, blinking orange waiting for approval). **Log** is the
+  transcript history below. See
+  [docs/BLE-PROTOCOL-OBSERVED.md](docs/BLE-PROTOCOL-OBSERVED.md) for the
+  data behind it.
+- **Approvals.** When the desktop relays a prompt, Approve / Deny takes
+  over the panel on any tab. Code-tab sessions never relay one, so when
+  `waiting` goes up the board shows a pulsing **Approve on desktop**
+  banner naming the tool call that's waiting (the newest one with no
+  result yet). A waiting count that was already there before the rise, or
+  that hasn't moved for 2 minutes with no tool call to pin it on, is
+  treated as a stale session: the WAITING tile shows it as "stale?" but
+  nothing pulses.
 - **Transcript history.** The desktop sends one merged list of recent lines
   with no session ids, and drops older sessions from it. Instead of
   replacing the screen with each list, the board keeps a rolling history of
   the last 40 lines: lines the desktop still lists are bright, older ones are
-  dimmed. A header shows total / running / waiting sessions. BOOT (B)
-  scrolls back.
+  dimmed. BOOT (B) scrolls back.
 - **Battery.** The board only reports battery voltage. It has no current
   or USB-power sensing, so "on USB" is a guess (battery above 4.15V).
 
