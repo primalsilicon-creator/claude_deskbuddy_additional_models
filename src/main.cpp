@@ -602,6 +602,10 @@ bool checkShake() {
 
 
 
+// Dashboard, session feed and tab strip (Waveshare). Included here so the
+// info, pet and transcript screens below can draw the tabs.
+#include "dash_ui.h"
+
 // Persistent screen-level title row ("INFO  n/3") matching the PET header,
 // then a per-page section label below it. The fixed title is the cue that
 // B cycles pages here just like it does on PET.
@@ -849,8 +853,6 @@ static uint8_t wrapInto(const char* in, char out[][WRAP_MAX + 2], uint8_t maxRow
   if (col > 0 && row < maxRows) { out[row][col] = 0; row++; }
   return row;
 }
-
-#include "dash_ui.h"
 
 // Approve / Deny touch targets along the bottom of the panel (panel coords).
 #if defined(BOARD_WAVESHARE_349)
