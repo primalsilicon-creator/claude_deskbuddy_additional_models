@@ -76,7 +76,14 @@ static inline bool pr_present(JsonDocument& d) { return !d["prompt"].isNull(); }
 
 static void _applyJson(const char* line, TamaState* out) {
   JsonDocument doc;
-  if (deserializeJson(doc, line)) return;
+  DeserializationError jerr = deserializeJson(doc, line);
+  if (jerr) {
+    // Log dropped lines: a heartbeat that fails to parse loses its prompt.
+    Serial.printf("json: %s, %u bytes, heap %u (max block %u)\n", jerr.c_str(),
+                  (unsigned)strlen(line), (unsigned)ESP.getFreeHeap(),
+                  (unsigned)ESP.getMaxAllocHeap());
+    return;
+  }
   if (xferCommand(doc)) { _lastLiveMs = millis(); return; }
 
   // Bridge sends {"time":[epoch_sec, tz_offset_sec]}; gmtime_r on the
@@ -95,6 +102,10 @@ static void _applyJson(const char* line, TamaState* out) {
     _lastLiveMs = millis();
     return;
   }
+
+  // One-shot events ({"evt":"turn",...}) aren't heartbeats. Without this they
+  // fell through and cleared the pending prompt until the next heartbeat.
+  if (!doc["evt"].isNull()) { _lastLiveMs = millis(); return; }
 
   out->sessionsTotal     = doc["total"]     | out->sessionsTotal;
   out->sessionsRunning   = doc["running"]   | out->sessionsRunning;
@@ -139,6 +150,7 @@ static void _applyJson(const char* line, TamaState* out) {
   }
   JsonObject pr = doc["prompt"];
   if (!pr.isNull()) {
+    if (la.isNull()) Serial.println("hb: prompt (no entries)");
     const char* pid = pr["id"]; const char* pt = pr["tool"]; const char* ph = pr["hint"];
     strncpy(out->promptId,   pid ? pid : "", sizeof(out->promptId)-1);   out->promptId[sizeof(out->promptId)-1]=0;
     strncpy(out->promptTool, pt  ? pt  : "", sizeof(out->promptTool)-1); out->promptTool[sizeof(out->promptTool)-1]=0;
