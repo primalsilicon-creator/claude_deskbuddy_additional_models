@@ -1724,9 +1724,9 @@ void loop() {
   if (now - lastDiag > 5000) {
     lastDiag = now;
     float ax, ay, az; halAccel(&ax, &ay, &az);
-    Serial.printf("diag: vbat %dmV usb=%d accel %.2f %.2f %.2f screenOff=%d napping=%d heap %u (max block %u)\n",
+    Serial.printf("diag: vbat %dmV usb=%d accel %.2f %.2f %.2f screenOff=%d napping=%d heap %u (max 8-bit block %u)\n",
                   halBatteryMv(), _onUsb, ax, ay, az, screenOff, napping,
-                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+                  (unsigned)ESP.getFreeHeap(), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
   }
 
   delay(screenOff ? 100 : 16);
