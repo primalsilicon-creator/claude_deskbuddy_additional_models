@@ -152,8 +152,14 @@ static void _applyJson(const char* line, TamaState* out) {
     strncpy(out->promptTool, pt  ? pt  : "", sizeof(out->promptTool)-1); out->promptTool[sizeof(out->promptTool)-1]=0;
     strncpy(out->promptHint, ph  ? ph  : "", sizeof(out->promptHint)-1); out->promptHint[sizeof(out->promptHint)-1]=0;
   } else {
-    if (out->sessionsWaiting && out->promptId[0] == 0 && la.isNull())
-      Serial.printf("hb: waiting %u, no prompt\n", out->sessionsWaiting);
+    if (out->sessionsWaiting) {
+      // Dump the raw line (minus the transcript) so we can see exactly what
+      // the desktop sent when it reports a wait without a prompt.
+      doc.remove("entries");
+      Serial.print("hb: waiting, no prompt: ");
+      serializeJson(doc, Serial);
+      Serial.println();
+    }
     out->promptId[0] = 0; out->promptTool[0] = 0; out->promptHint[0] = 0;
   }
   out->lastUpdated = millis();
