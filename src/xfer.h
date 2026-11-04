@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include "ble_bridge.h"
+#include "board_id.h"
 #include <mbedtls/base64.h>
 #include <ArduinoJson.h>
 
@@ -109,6 +110,18 @@ inline bool xferCommand(JsonDocument& doc) {
     return true;
   }
 
+  if (strcmp(cmd, "board") == 0) {
+    // Just the board identity: {"board":{"model":..,"chip":..,"id":..,"mac":..}}
+    char b[160];
+    int len = snprintf(b, sizeof(b),
+      "{\"ack\":\"board\",\"ok\":true,\"n\":0,\"data\":"
+      "{\"model\":\"%s\",\"chip\":\"%s\",\"id\":\"%s\",\"mac\":\"%s\"}}\n",
+      BOARD_MODEL, ESP.getChipModel(), boardShortId(), boardMacStr());
+    Serial.write(b, len);
+    bleWrite((const uint8_t*)b, len);
+    return true;
+  }
+
   if (strcmp(cmd, "status") == 0) {
     // Dump everything the info screens show. Manual printf rather than
     // ArduinoJson serialize — less heap churn, and the shape is fixed.
@@ -117,15 +130,17 @@ inline bool xferCommand(JsonDocument& doc) {
     int vBus = halOnUsb() ? 5000 : 0;   // no VBUS sense either; best guess
     int pct = (vBat - 3200) / 10;
     if (pct < 0) pct = 0; if (pct > 100) pct = 100;
-    char b[320];
+    char b[448];
     int len = snprintf(b, sizeof(b),
       "{\"ack\":\"status\",\"ok\":true,\"n\":0,\"data\":{"
       "\"name\":\"%s\",\"owner\":\"%s\",\"sec\":%s,"
+      "\"board\":{\"model\":\"%s\",\"chip\":\"%s\",\"id\":\"%s\",\"mac\":\"%s\"},"
       "\"bat\":{\"pct\":%d,\"mV\":%d,\"mA\":%d,\"usb\":%s},"
       "\"sys\":{\"up\":%lu,\"heap\":%u,\"fsFree\":%lu,\"fsTotal\":%lu},"
       "\"stats\":{\"appr\":%u,\"deny\":%u,\"vel\":%u,\"nap\":%lu,\"lvl\":%u}"
       "}}\n",
       petName(), ownerName(), bleSecure() ? "true" : "false",
+      BOARD_MODEL, ESP.getChipModel(), boardShortId(), boardMacStr(),
       pct, vBat, iBat, (vBus > 4000) ? "true" : "false",
       millis() / 1000, ESP.getFreeHeap(),
       (unsigned long)(LittleFS.totalBytes() - LittleFS.usedBytes()),
