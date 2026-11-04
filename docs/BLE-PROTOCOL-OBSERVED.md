@@ -9,6 +9,12 @@ the wire. Where it disagrees with `REFERENCE.md`, the section
 Transcript text below is shortened, and file paths, tool-use ids and
 thinking signatures are redacted.
 
+The desktop app's own help page ("Connect maker devices to Claude") gives a
+shorter version of `REFERENCE.md` with the same UUIDs, heartbeat, `prompt`,
+permission reply and 4 KB turn-event limit. It says the bridge serves both
+**Claude Cowork and Claude Code**. This capture covers only a Code-tab
+session, so whether Cowork sessions relay `prompt` is still untested.
+
 ## The capture
 
 | | |
