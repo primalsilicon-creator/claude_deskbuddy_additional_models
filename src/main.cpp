@@ -1034,12 +1034,18 @@ static void drawDeskWaitBanner(int h) {
   uint16_t bg = on ? HOT : 0x8000;
   spr.fillRoundRect(0, H - h, W, h, 6, bg);
   spr.setTextColor(WHITE, bg);
-  spr.setTextDatum(MC_DATUM);
-  spr.setTextFont(4);
-  if (spr.textWidth("Approve on desktop") > W - 8) spr.setTextFont(2);
-  spr.drawString("Approve on desktop", W / 2, H - h / 2 + 1);
-  spr.setTextDatum(TL_DATUM);
+  // drawString() with a centre datum clips at the viewport width measured
+  // from the sprite's left edge, which cut the text off at "Approve o".
+  // Place it by hand and print it, which the transcript does without clipping.
+  // Font 2 doubled is 32px tall; fall back to normal size on narrow panels.
+  const char* msg = "Approve on desktop";
   spr.setTextFont(2);
+  spr.setTextSize(2);
+  if (spr.textWidth(msg) > W - 8) spr.setTextSize(1);
+  int tw = spr.textWidth(msg), th = spr.fontHeight();
+  spr.setCursor((W - tw) / 2, H - h + (h - th) / 2 + 1);
+  spr.print(msg);
+  spr.setTextSize(1);
 }
 
 void drawHUD() {
