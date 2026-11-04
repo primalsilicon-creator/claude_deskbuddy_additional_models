@@ -19,7 +19,7 @@ const int TAB_HIT_H = TAB_H + 6;     // touch zone for the tab strip
 const bool DASH_WIDE = true;         // room for the tools list beside the chart
 #else
 // The panel sprite is 8-bit (RGB332): 0x10A2 would round down to black.
-const uint16_t DASH_TILE = 0x39E7;
+const uint16_t DASH_TILE = 0x4208;   // RGB332 (2,2,1): dark grey. 0x39E7 lost its blue and went olive
 const int TAB_W = 52;
 // Resistive touch is coarse; the strip is drawn 12px tall but takes taps
 // down to 24px.
