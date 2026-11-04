@@ -119,8 +119,16 @@ uint8_t menuSel     = 0;
 uint8_t brightLevel = 4;           // 0..4 → ScreenBreath 20..100
 bool    btnALong    = false;
 
+#if defined(SESSION_MODEL)
+// Waveshare: the panel screens are tabs, in this order. DISP_NORMAL is the
+// transcript ("log"); the dashboard is the default.
+enum DisplayMode { DISP_DASH, DISP_SESSION, DISP_NORMAL, DISP_PET, DISP_INFO, DISP_COUNT };
+const uint8_t DISP_HOME = DISP_DASH;
+#else
 enum DisplayMode { DISP_NORMAL, DISP_PET, DISP_INFO, DISP_COUNT };
-uint8_t displayMode = DISP_NORMAL;
+const uint8_t DISP_HOME = DISP_NORMAL;
+#endif
+uint8_t displayMode = DISP_HOME;
 uint8_t infoPage = 0;
 uint8_t petPage = 0;
 const uint8_t PET_PAGES = 2;
@@ -567,7 +575,11 @@ static void drawClock() {
 
 PersonaState derive(const TamaState& s) {
   if (!s.connected)            return P_IDLE;
+#if defined(SESSION_MODEL)
+  if (sessionFreshWait() || s.promptId[0]) return P_ATTENTION;
+#else
   if (s.sessionsWaiting > 0)   return P_ATTENTION;
+#endif
   if (s.recentlyCompleted)     return P_CELEBRATE;
   if (s.sessionsRunning >= 3)  return P_BUSY;
   return P_IDLE;   // connected, 0+ sessions, nothing urgent — hang out
@@ -589,6 +601,10 @@ bool checkShake() {
 
 
 
+
+// Dashboard, session feed and tab strip (Waveshare). Included here so the
+// info, pet and transcript screens below can draw the tabs.
+#include "dash_ui.h"
 
 // Persistent screen-level title row ("INFO  n/3") matching the PET header,
 // then a per-page section label below it. The fixed title is the cue that
@@ -672,14 +688,15 @@ void drawInfo() {
 #else
     _infoHeader(p, y, "BUTTONS", infoPage);
     spr.setTextColor(p.text, p.bg);    ln("PWR (A, middle)");
-    spr.setTextColor(p.textDim, p.bg); ln("    next screen / approve prompt");
+    spr.setTextColor(p.textDim, p.bg); ln("    next tab / approve prompt");
     ln("    hold: menu"); y += 4;
     spr.setTextColor(p.text, p.bg);    ln("BOOT (B, backlight icon)");
-    spr.setTextColor(p.textDim, p.bg); ln("    next page / deny prompt");
+    spr.setTextColor(p.textDim, p.bg); ln("    page / scroll / deny prompt");
     ln("    hold 3s: power off"); y += 4;
     spr.setTextColor(p.text, p.bg);    ln("Touch");
-    spr.setTextColor(p.textDim, p.bg); ln("    tap pet = A, tap panel = B");
-    ln("    prompts: tap Approve / Deny");
+    spr.setTextColor(p.textDim, p.bg); ln("    tap a tab to open it");
+    ln("    tap pet = A, tap panel = B");
+    ln("    session/log: top older, bottom newer");
 #endif
 
   } else if (infoPage == 2) {
@@ -795,6 +812,10 @@ void drawInfo() {
     ln("display");
 #endif
   }
+#if defined(SESSION_MODEL)
+  char lbl[12]; snprintf(lbl, sizeof(lbl), "info %u/%u", infoPage + 1, INFO_PAGES);
+  drawTabs(DISP_INFO, lbl);
+#endif
 }
 
 
@@ -950,16 +971,20 @@ static void drawPetStats(const Palette& p) {
   spr.setCursor(11, y + 1); spr.printf("Lv %u", stats().level);
 
   y += 20;
+  // Short panels (the 2.8" at 134px) cut the last rows off, so the counters
+  // move into the empty right-hand column, under the pet's name.
+  int sx = 6;
+  if (H < 150) { sx = W / 2; y = 34; }
   spr.setTextColor(p.textDim, p.bg);
-  spr.setCursor(6, y);
+  spr.setCursor(sx, y);
   spr.printf("approved %u", stats().approvals);
-  spr.setCursor(6, y + 10);
+  spr.setCursor(sx, y + 10);
   spr.printf("denied   %u", stats().denials);
   uint32_t nap = stats().napSeconds;
-  spr.setCursor(6, y + 20);
+  spr.setCursor(sx, y + 20);
   spr.printf("napped   %luh%02lum", nap/3600, (nap/60)%60);
   auto tokFmt = [&](const char* label, uint32_t v, int yPx) {
-    spr.setCursor(6, yPx);
+    spr.setCursor(sx, yPx);
     if (v >= 1000000)   spr.printf("%s%lu.%luM", label, v/1000000, (v/100000)%10);
     else if (v >= 1000) spr.printf("%s%lu.%luK", label, v/1000, (v/100)%10);
     else                spr.printf("%s%lu", label, v);
@@ -1000,7 +1025,7 @@ static void drawPetHowTo(const Palette& p) {
   ln(p.textDim, "any button or touch = wake"); gap();
 
 #if defined(BOARD_WAVESHARE_349)
-  ln(p.textDim, "PWR: screens  BOOT: page  hold PWR: menu");
+  ln(p.textDim, "PWR: tabs  BOOT: page  hold PWR: menu");
 #else
   ln(p.textDim, "tap pet: screens  hold: menu");
 #endif
@@ -1025,6 +1050,18 @@ void drawPet() {
   spr.setTextColor(p.textDim, p.bg);
   spr.setCursor(W - 28, y + 2);
   spr.printf("%u/%u", petPage + 1, PET_PAGES);
+#if defined(SESSION_MODEL)
+  // The tab strip covers the name row, so the name moves to the stats page
+  // body and the page counter into the tab.
+  char lbl[12]; snprintf(lbl, sizeof(lbl), "pet %u/%u", petPage + 1, PET_PAGES);
+  drawTabs(DISP_PET, lbl);
+  if (petPage == 0) {
+    spr.setTextColor(p.text, p.bg);
+    spr.setCursor(W / 2, TAB_H + 4);
+    if (ownerName()[0]) spr.printf("%s's %s", ownerName(), petName());
+    else spr.print(petName());
+  }
+#endif
 }
 
 // Full-width banner along the bottom of the panel, pulsing gently so it
@@ -1054,34 +1091,41 @@ void drawHUD() {
   // A one-line session summary, then the transcript history in TFT_eSPI's
   // 16px font 2: about 8 rows of up to ~50 characters. Font 2 is
   // proportional, so 50 chars of normal text fits the 428px panel.
+#if defined(SESSION_MODEL)
+  const int HDR = TAB_H + 2;   // the tab strip replaces the counts row
+#else
   const int HDR = 12;
+#endif
   // About 8.5px per character of font 2: 50 on the Waveshare, 26 on the 32E.
   const int LH = 17, WIDTH = W * 2 / 17;
   // The desktop says a session is waiting but sent no prompt to answer
   // here (it only relays prompts for sessions it tracks). Show a big banner
   // at the bottom so it isn't missed, and keep the transcript above it.
+#if defined(SESSION_MODEL)
+  const bool deskWait = tama.connected && sessionFreshWait();
+#else
   const bool deskWait = tama.connected && tama.sessionsWaiting > 0;
+#endif
   const int BANNER = 34;
   const int SHOW = (H - HDR - 2 - (deskWait ? BANNER : 0)) / LH;
   const int AREA = H - HDR;
   spr.fillRect(0, 0, W, H, p.bg);
   spr.setTextSize(1);
+#if defined(SESSION_MODEL)
+  drawTabs(DISP_NORMAL);
+#else
   spr.setTextColor(p.textDim, p.bg);
   spr.setCursor(4, 1);
   if (tama.connected) {
-#if defined(BOARD_WAVESHARE_349)
-    spr.printf("sessions %u   running %u   waiting %u", tama.sessionsTotal,
-               tama.sessionsRunning, tama.sessionsWaiting);
-#else
     spr.printf("sess %u  run %u  wait %u", tama.sessionsTotal,
                tama.sessionsRunning, tama.sessionsWaiting);
-#endif
     if (tama.nLines && !deskWait) {
       spr.setCursor(W - 6 * 12, 1);
       spr.printf("%2u lines", tama.nLines);
     }
   }
   spr.drawFastHLine(0, HDR - 2, W, p.textDim);
+#endif
   spr.setTextFont(2);
 
   if (tama.lineGen != lastLineGen) { msgScroll = 0; lastLineGen = tama.lineGen; wake(); }
@@ -1200,6 +1244,15 @@ static void actionB(bool inPrompt) {
     beep(2400, 30);
     petPage = (petPage + 1) % PET_PAGES;
     applyDisplayMode();
+#if defined(SESSION_MODEL)
+  } else if (displayMode == DISP_DASH) {
+    beep(2400, 30);
+    displayMode = DISP_SESSION;       // B on the dashboard opens the feed
+    applyDisplayMode();
+  } else if (displayMode == DISP_SESSION) {
+    beep(2400, 30);
+    sessionScroll = (sessionScroll >= FEED_CAP) ? 0 : sessionScroll + 1;   // clamped in drawSession
+#endif
   } else {
     beep(2400, 30);
     msgScroll = (msgScroll >= 90) ? 0 : msgScroll + 1;   // clamped to history in drawHUD
@@ -1338,7 +1391,7 @@ void loop() {
       beep(1200, 80);   // alert chirp
       // Jump to the approval screen no matter what was open — drawApproval
       // only runs from drawHUD which only runs in DISP_NORMAL.
-      displayMode = DISP_NORMAL;
+      displayMode = DISP_HOME;
       menuOpen = settingsOpen = resetOpen = false;
       applyDisplayMode();
       characterInvalidate();
@@ -1352,7 +1405,12 @@ void loop() {
   if (tama.sessionsWaiting > lastWaiting && !tama.promptId[0] && tama.connected) {
     wake();
     beep(1200, 80);
-    displayMode = DISP_NORMAL;
+    // Stay on the session feed if it's open: it shows the banner too.
+#if defined(SESSION_MODEL)
+    if (displayMode != DISP_SESSION && displayMode != DISP_NORMAL) displayMode = DISP_HOME;
+#else
+    displayMode = DISP_HOME;
+#endif
     menuOpen = settingsOpen = resetOpen = false;
     applyDisplayMode();
     characterInvalidate();
@@ -1461,6 +1519,16 @@ void loop() {
         }
       } else if (!inPanel) {
         actionA(false);
+#if defined(SESSION_MODEL)
+      } else if (!blePasskey() && py < TAB_HIT_H && tabHit(px) >= 0) {
+        beep(1800, 30);
+        displayMode = tabHit(px);
+        applyDisplayMode();
+      } else if (displayMode == DISP_SESSION && !blePasskey()) {
+        beep(2400, 30);
+        if (py < H / 2) { if (sessionScroll < 90) sessionScroll++; }   // clamped in drawSession
+        else if (sessionScroll > 0) sessionScroll--;
+#endif
       } else if (displayMode == DISP_NORMAL && settings().hud && !blePasskey()) {
         beep(2400, 30);
         if (py < H / 2) { if (msgScroll < 90) msgScroll++; }   // clamped in drawHUD
@@ -1478,14 +1546,25 @@ void loop() {
     bool wasOff = screenOff;
     wake();
     if (!wasOff) {
-      int px = tx - PET_PANE_W;   // panel coordinates
+      int px = tx - PET_PANE_W - PANEL_PAD_X;   // panel coordinates
+      int py = ty - PANEL_TOP;
+      bool overlay = menuOpen || settingsOpen || resetOpen || blePasskey();
       if (inPrompt) {
-        if (ty >= BTN_Y && ty < BTN_Y + BTN_H) {
+        if (py >= BTN_Y && py < BTN_Y + BTN_H) {
           if (px >= BTN_APPROVE_X && px < BTN_APPROVE_X + BTN_W) answerPrompt(true);
           else if (px >= BTN_DENY_X && px < BTN_DENY_X + BTN_W) answerPrompt(false);
         }
       } else if (tx < PET_PANE_W) {
         actionA(false);
+      } else if (!overlay && py < TAB_HIT_H && tabHit(px) >= 0) {
+        beep(1800, 30);
+        displayMode = tabHit(px);
+        applyDisplayMode();
+      } else if (!overlay && (displayMode == DISP_SESSION || displayMode == DISP_NORMAL)) {
+        beep(2400, 30);
+        uint8_t& sc = displayMode == DISP_SESSION ? sessionScroll : msgScroll;
+        if (py < H / 2) { if (sc < 90) sc++; }   // clamped when drawn
+        else if (sc > 0) sc--;
       } else {
         actionB(false);
       }
@@ -1500,7 +1579,11 @@ void loop() {
   // doesn't count as activity (it's the only way to get the RTC synced).
   bool clocking = displayMode == DISP_NORMAL
                && !menuOpen && !settingsOpen && !resetOpen && !inPrompt
+#if defined(SESSION_MODEL)
+               && tama.sessionsRunning == 0 && !sessionFreshWait()
+#else
                && tama.sessionsRunning == 0 && tama.sessionsWaiting == 0
+#endif
                && dataRtcValid() && _onUsb;
 
   static bool wasClocking = false;
@@ -1568,6 +1651,12 @@ void loop() {
     const Palette& p = characterPalette();
     panelBegin();
     if (blePasskey()) drawPasskey();
+#if defined(SESSION_MODEL)
+    // A relayed prompt takes the panel whichever tab is open.
+    else if (tama.promptId[0]) drawApproval();
+    else if (displayMode == DISP_DASH) drawDash();
+    else if (displayMode == DISP_SESSION) drawSession();
+#endif
     else if (clocking) drawClock();
     else if (displayMode == DISP_INFO) drawInfo();
     else if (displayMode == DISP_PET) drawPet();
@@ -1635,8 +1724,9 @@ void loop() {
   if (now - lastDiag > 5000) {
     lastDiag = now;
     float ax, ay, az; halAccel(&ax, &ay, &az);
-    Serial.printf("diag: vbat %dmV usb=%d accel %.2f %.2f %.2f screenOff=%d napping=%d\n",
-                  halBatteryMv(), _onUsb, ax, ay, az, screenOff, napping);
+    Serial.printf("diag: vbat %dmV usb=%d accel %.2f %.2f %.2f screenOff=%d napping=%d heap %u (max block %u)\n",
+                  halBatteryMv(), _onUsb, ax, ay, az, screenOff, napping,
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   }
 
   delay(screenOff ? 100 : 16);

@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include "ble_bridge.h"
 #include "xfer.h"
+#include "session.h"
 
 struct TamaState {
   uint8_t  sessionsTotal;
@@ -105,7 +106,16 @@ static void _applyJson(const char* line, TamaState* out) {
 
   // One-shot events ({"evt":"turn",...}) aren't heartbeats. Without this they
   // fell through and cleared the pending prompt until the next heartbeat.
-  if (!doc["evt"].isNull()) { _lastLiveMs = millis(); return; }
+  if (!doc["evt"].isNull()) {
+#if defined(SESSION_MODEL)
+    if (!strcmp(doc["evt"] | "", "turn")) sessionOnTurn(doc);
+#endif
+    _lastLiveMs = millis();
+    return;
+  }
+#if defined(SESSION_MODEL)
+  sessionOnHeartbeat(doc);
+#endif
 
   out->sessionsTotal     = doc["total"]     | out->sessionsTotal;
   out->sessionsRunning   = doc["running"]   | out->sessionsRunning;
