@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <esp_heap_caps.h>
 #include "ble_bridge.h"
 #include "xfer.h"
 #include "session.h"
@@ -18,7 +19,11 @@ struct TamaState {
   // "entries" list with no session ids, so instead of replacing the screen
   // with each list, new lines are appended here and old ones scroll off.
   // That way lines survive heartbeats that drop older sessions.
+#if defined(BOARD_HAS_PSRAM)
   char     lines[40][92];
+#else
+  char     lines[24][92];   // no PSRAM: keep less history, leave heap for JSON
+#endif
   uint8_t  nLines;
   uint8_t  linesFromLatest;  // how many trailing lines the last heartbeat still lists
   uint16_t lineGen;          // bumps when lines change — lets UI reset scroll
@@ -77,12 +82,37 @@ static inline bool pr_present(JsonDocument& d) { return !d["prompt"].isNull(); }
 
 static void _applyJson(const char* line, TamaState* out) {
   JsonDocument doc;
-  DeserializationError jerr = deserializeJson(doc, line);
+  DeserializationError jerr;
+  // Turn events are the big lines (up to 4KB) and most of their bytes are
+  // things the board never shows: thinking signatures, tool output, file
+  // contents in tool input. Parse them through a filter so only the fields
+  // session.h reads get stored. On the 2.8" (no PSRAM) unfiltered events
+  // ran out of heap. A plain-string `content` (a typed user message) skips
+  // the filter, since an object filter would drop a string.
+  // The desktop sends evt, role, content in that order, so the first
+  // "content": is the top-level one (a tool_result's own content comes later).
+  const char* ck = strstr(line, "\"content\":");
+  bool stringContent = ck && ck[10] == '"';
+  if (!strncmp(line, "{\"evt\"", 6) && !stringContent) {
+    static JsonDocument filter;
+    if (filter.isNull()) {
+      filter["evt"] = true;
+      filter["role"] = true;
+      JsonObject b = filter["content"].add<JsonObject>();
+      for (const char* k : { "type", "text", "name", "id", "tool_use_id", "is_error" }) b[k] = true;
+      JsonObject in = b["input"].to<JsonObject>();
+      for (const char* k : { "command", "file_path", "path", "pattern", "url", "query",
+                             "description", "prompt", "notebook_path", "skill" }) in[k] = true;
+    }
+    jerr = deserializeJson(doc, line, DeserializationOption::Filter(filter));
+  } else {
+    jerr = deserializeJson(doc, line);
+  }
   if (jerr) {
     // Log dropped lines: a heartbeat that fails to parse loses its prompt.
-    Serial.printf("json: %s, %u bytes, heap %u (max block %u)\n", jerr.c_str(),
+    Serial.printf("json: %s, %u bytes, heap %u (max 8-bit block %u)\n", jerr.c_str(),
                   (unsigned)strlen(line), (unsigned)ESP.getFreeHeap(),
-                  (unsigned)ESP.getMaxAllocHeap());
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     return;
   }
   if (xferCommand(doc)) { _lastLiveMs = millis(); return; }
@@ -190,7 +220,14 @@ struct _LineBuf {
 
 // Turn events can be up to 4KB, and a heartbeat with a long transcript plus
 // a prompt can pass 1KB, so lines up to 4KB are accepted.
+#if defined(BOARD_HAS_PSRAM)
 static _LineBuf<4096> _usbLine, _btLine;
+#else
+// No PSRAM: USB serial only carries debug input here (the desktop talks
+// over BLE), so its buffer gives 3KB back to the heap.
+static _LineBuf<4096> _btLine;
+static _LineBuf<1024> _usbLine;
+#endif
 
 inline void dataPoll(TamaState* out) {
   uint32_t now = millis();
