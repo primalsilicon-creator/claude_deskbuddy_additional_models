@@ -5,7 +5,7 @@ This fork runs the buddy firmware on the **Waveshare ESP32-S3-Touch-LCD-3.49 /
 instead of the M5StickC Plus. The Bluetooth protocol, pets, stats and GIF
 characters are unchanged. What changed:
 
-- **Hardware layer.** All board code is in `src/hal.h` / `src/hal.cpp`:
+- **Hardware layer.** All board code is in `src/hal.h` / `src/hal_waveshare349.cpp`:
   the AXS15231B 172×640 QSPI panel, TCA9554 expander (LCD reset, backlight
   enable, power latch), QMI8658 accelerometer, PCF85063 clock, AXS15231B
   touch, battery ADC, and the BOOT / PWR buttons. The M5StickCPlus library
@@ -62,6 +62,63 @@ including touch coordinates and whether the IMU was found.
   on the wrong side, check the `touch:` lines in the serial log.
 - Lying the board **face down** dims it (nap). The firmware treats however
   the board is lying at power-on as face up, so boot it face up or standing.
+
+## LCDwiki ESP32-32E (2.8" and 3.2")
+
+The same firmware also builds for the LCDwiki ESP32-32E displays. Board
+code is in `src/hal_esp32_32e.cpp`. Both are a classic ESP32 with 4MB
+flash and no PSRAM, a 240×320 panel and XPT2046 resistive touch. Pick the
+env for your board, because the screen chip and pins differ:
+
+| Board | Env | Panel | Notes |
+| ----- | --- | ----- | ----- |
+| [2.8inch](https://www.lcdwiki.com/2.8inch_ESP32-32E_Display) (E32R28T, also sold as "ZLX") | `esp32-32e-28` | ILI9341V | backlight IO21, touch on its own pins |
+| [3.2inch](https://www.lcdwiki.com/3.2inch_ESP32-32E_Display) (E32R32P) | `esp32-32e` | ST7789 IPS | backlight IO27, touch shares the LCD bus |
+
+```bash
+pio run -e esp32-32e-28 -t upload     # or -e esp32-32e for the 3.2"
+# optional, the bufo GIF character over USB (or send it from the desktop):
+python3 tools/flash_character.py characters/bufo esp32-32e-28
+```
+
+- **Layout.** The 2.8" runs landscape (320×240, USB on the right): the pet
+  lives in a 96px strip along the top and the transcript, prompts, pages and
+  menus fill the panel below. The 3.2" runs portrait with a 130px pet area.
+  The 2.8" panel is addressed as 320×240 rather than the ILI9341's usual
+  240×320, and needs RGB colour order; both are set in its env. With no PSRAM the screen is
+  two sprites: the pet in full colour and the panel in 8-bit colour, so UI
+  colours are slightly coarser than on the Waveshare.
+- **Touch-only.** The case this board ships in covers every button, so
+  everything is done by touch:
+
+  |                          | Normal                       | Approval        |
+  | ------------------------ | ---------------------------- | --------------- |
+  | **Tap pet**              | next screen                  |                 |
+  | **Tap panel**            | next page (transcript: top half scrolls back, bottom half forward) | tap **Approve** / **Deny** |
+  | **Hold anywhere**        | menu (tap a button to pick it, tap the pet or hold to close) | |
+
+  BOOT still works as the A button if you can reach it.
+- **Touch calibration.** On first boot it asks you to press three
+  crosshairs (it gives up after 20s per point and uses rough defaults). Redo it any time from **settings → touch cal**.
+- **No IMU,** so no shake or face-down nap. Instead, a screen-off of a
+  minute or more on battery counts as a nap.
+- **No clock chip.** The time comes from the desktop and is kept in the
+  ESP32's own clock until the next reboot.
+- **Turn off** (menu) puts the board in deep sleep. Touch the screen to wake
+  it.
+- **Attention** flashes the screen border and the red RGB LED.
+- **Sound** comes out of the 1.25mm speaker connector (FM8002E amp) if a
+  small 8Ω speaker is plugged in. It is quiet when nothing is connected.
+
+Things to check on first boot:
+
+- If red and blue are swapped or the colours look inverted, there are
+  commented-out flags for that in each env of `platformio.ini`.
+- The serial log prints free heap after the sprites and after BLE start. If
+  BLE fails to start, that number is the first thing to look at.
+- The battery reading assumes a 1/2 divider on IO34. If DEVICE info shows
+  a voltage that is off by a constant factor, change `BAT_DIVIDER` in
+  `src/hal_esp32_32e.cpp`.
 
 The original README for the M5StickC Plus follows.
 
@@ -203,8 +260,8 @@ The whole folder must fit under 1.8MB —
 See `characters/bufo/` for a working example.
 
 If you're iterating on a character and would rather skip the BLE round-trip,
-`tools/flash_character.py characters/bufo` stages it into `data/` and runs
-`pio run -t uploadfs` directly over USB.
+`tools/flash_character.py characters/bufo [pio-env]` stages it into `data/` and runs
+`pio run -e <env> -t uploadfs` directly over USB (env defaults to `waveshare-349-v2`).
 
 ## The seven states
 

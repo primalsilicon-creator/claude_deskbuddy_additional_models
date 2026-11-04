@@ -1,15 +1,29 @@
 #include "hal.h"
 #include <LittleFS.h>
 #include <stdarg.h>
+#include <esp_heap_caps.h>
+#include <esp_bt.h>
 #include "ble_bridge.h"
 #include "data.h"
 #include "buddy.h"
 
-// TFT_eSPI is only the drawing library here: the sprite lives in PSRAM and
-// halPush() streams it to the AXS15231B panel. The parent object is never
+// Waveshare: TFT_eSPI is only the drawing library. The sprite lives in
+// PSRAM and halPush() streams it to the AXS15231B panel; `tft` is never
 // initialised, so it never touches any pins.
-static TFT_eSPI _tftParent;
-TFT_eSprite spr = TFT_eSprite(&_tftParent);
+// ESP32-32E: `tft` is the real ST7789 driver. `spr` is the panel below the
+// pet (8-bit to save RAM) and `petSpr` is the pet pane in full colour.
+#if defined(TFT_PANEL_W)
+TFT_eSPI tft(TFT_PANEL_W, TFT_PANEL_H);   // panel size the driver header can't express
+#else
+TFT_eSPI tft;
+#endif
+TFT_eSprite spr = TFT_eSprite(&tft);
+#if defined(BOARD_ESP32_32E)
+static TFT_eSprite _petSprite = TFT_eSprite(&tft);
+TFT_eSprite& petSpr = _petSprite;
+#else
+TFT_eSprite& petSpr = spr;
+#endif
 
 // Advertise as "Claude-XXXX" (last two BT MAC bytes) so multiple sticks
 // in one room are distinguishable in the desktop picker. Name persists in
@@ -24,6 +38,7 @@ static void startBt() {
 
 #include "character.h"
 #include "stats.h"
+#if defined(BOARD_WAVESHARE_349)
 // Landscape 640x172. The pet draws in the left pane (x < PET_PANE_W) in
 // absolute coordinates. Everything else draws inside a viewport over the
 // right-hand panel, so W/H/CX below are the panel's size, not the screen's.
@@ -31,19 +46,57 @@ static void startBt() {
 // inset: the panel by PANEL_PAD_X on each side and PANEL_TOP / PANEL_BOTTOM
 // vertically, the pet by PET_TOP.
 const int PANEL_PAD_X = 6, PANEL_TOP = 8, PANEL_BOTTOM = 6, PET_TOP = 8;
+const int PANEL_X0 = PET_PANE_W;          // panel origin in the main sprite
 const int W = SCREEN_W - PET_PANE_W - 2 * PANEL_PAD_X;
 const int H = SCREEN_H - PANEL_TOP - PANEL_BOTTOM;
+// Centre of full-screen messages (splash, "bye!") in the main sprite
+const int MSG_CX = SCREEN_W / 2, MSG_CY = SCREEN_H / 2;
+#else
+// Portrait 240x320: the pet sprite is the top PET_PANE_H rows and `spr`
+// (the panel) is everything below it, so panel coordinates start at the
+// top-left of `spr`.
+const int PANEL_PAD_X = 6, PANEL_TOP = 4, PANEL_BOTTOM = 6, PET_TOP = 0;
+const int PANEL_X0 = 0;
+const int W = SCREEN_W - 2 * PANEL_PAD_X;
+const int H = PANEL_SPR_H - PANEL_TOP - PANEL_BOTTOM;
+const int MSG_CX = SCREEN_W / 2, MSG_CY = PANEL_SPR_H / 2;
+#endif
 const int CX = W / 2;
-// The board has no LED. "Attention" flashes a border around the screen.
+// "Attention" flashes a border around the screen (and the hidden LED on
+// the 32E).
 const int FLASH_PX = 6;   // thick enough to show past the bezel
 // QMI8658 Z axis sign when the screen faces down. Calibrated at boot: if the
 // board is lying flat when it starts, that is taken as face-up, and face-down
 // is the opposite sign. Otherwise this default is used.
 float FACE_DOWN_Z_SIGN = -1.0f;
 
-static void panelBegin() { spr.setViewport(PET_PANE_W + PANEL_PAD_X, PANEL_TOP, W, H, true); }
+static void panelBegin() { spr.setViewport(PANEL_X0 + PANEL_PAD_X, PANEL_TOP, W, H, true); }
+#if defined(BOARD_WAVESHARE_349)
 static void petBegin()   { spr.setViewport(0, PET_TOP, PET_PANE_W - 1, SCREEN_H - PET_TOP, true); }
+#else
+static void petBegin()   {}   // the pet has its own sprite
+#endif
 static void panelEnd()   { spr.resetViewport(); }
+
+// Send the frame to the screen: on the 32E the pet sprite, then the panel.
+static void pushFrame() {
+  halPushPet(petSpr);
+  halPush(spr);
+}
+
+// Border flash around the whole screen. On the 32E it spans both sprites.
+static void drawFlashBorder(uint16_t c) {
+#if defined(BOARD_WAVESHARE_349)
+  for (int i = 0; i < FLASH_PX; i++) spr.drawRect(i, i, SCREEN_W - 2 * i, SCREEN_H - 2 * i, c);
+#else
+  petSpr.fillRect(0, 0, SCREEN_W, FLASH_PX, c);
+  petSpr.fillRect(0, 0, FLASH_PX, PET_PANE_H, c);
+  petSpr.fillRect(SCREEN_W - FLASH_PX, 0, FLASH_PX, PET_PANE_H, c);
+  spr.fillRect(0, PANEL_SPR_H - FLASH_PX, SCREEN_W, FLASH_PX, c);
+  spr.fillRect(0, 0, FLASH_PX, PANEL_SPR_H, c);
+  spr.fillRect(SCREEN_W - FLASH_PX, 0, FLASH_PX, PANEL_SPR_H, c);
+#endif
+}
 
 // Colors used across multiple UI surfaces
 const uint16_t HOT   = 0xFA20;   // red-orange: warnings, impatience, deny
@@ -116,8 +169,15 @@ static bool isFaceDown() {
 
 static void applyBrightness() { halBacklight(20 + brightLevel * 20); }
 
+static uint32_t screenOffAt = 0;
 static void wake() {
   lastInteractMs = millis();
+  if (screenOff && !halImuOk()) {
+    // No accelerometer, so no face-down nap: a long enough screen-off
+    // counts as one instead, so energy still refills.
+    uint32_t off = (millis() - screenOffAt) / 1000;
+    if (off >= 60) { statsOnNapEnd(off); statsOnWake(); }
+  }
   if (screenOff) {
     halScreenOn(true);
     applyBrightness();
@@ -161,8 +221,19 @@ bool    settingsOpen = false;
 uint8_t settingsSel  = 0;
 // The original firmware's "bluetooth" and "wifi" items only stored a
 // preference (BLE is always on, there is no WiFi), so they are gone.
-const char* settingsItems[] = { "brightness", "sound", "flash", "transcript", "flip", "ascii pet", "reset", "back" };
-const uint8_t SETTINGS_N = 8;
+enum {
+  SET_BRIGHT, SET_SOUND, SET_FLASH, SET_HUD, SET_FLIP, SET_PET, SET_RESET,
+#if defined(BOARD_ESP32_32E)
+  SET_TOUCHCAL,
+#endif
+  SET_BACK, SETTINGS_COUNT
+};
+const char* settingsItems[] = { "brightness", "sound", "flash", "transcript", "flip", "ascii pet", "reset",
+#if defined(BOARD_ESP32_32E)
+  "touch cal",
+#endif
+  "back" };
+const uint8_t SETTINGS_N = SETTINGS_COUNT;
 
 bool    resetOpen = false;
 uint8_t resetSel  = 0;
@@ -174,17 +245,25 @@ static uint8_t  resetConfirmIdx = 0xFF;
 static void applySetting(uint8_t idx) {
   Settings& s = settings();
   switch (idx) {
-    case 0:
+    case SET_BRIGHT:
       brightLevel = (brightLevel + 1) % 5;
       applyBrightness();
       return;
-    case 1: s.sound = !s.sound; break;
-    case 2: s.led = !s.led; break;
-    case 3: s.hud = !s.hud; break;
-    case 4: s.clockRot = (s.clockRot + 1) % 2; halSetFlip(s.clockRot); break;
-    case 5: nextPet(); return;
-    case 6: resetOpen = true; resetSel = 0; resetConfirmIdx = 0xFF; return;
-    case 7: settingsOpen = false; characterInvalidate(); return;
+    case SET_SOUND: s.sound = !s.sound; break;
+    case SET_FLASH: s.led = !s.led; break;
+    case SET_HUD:   s.hud = !s.hud; break;
+    case SET_FLIP:  s.clockRot = (s.clockRot + 1) % 2; halSetFlip(s.clockRot); break;
+    case SET_PET:   nextPet(); return;
+    case SET_RESET: resetOpen = true; resetSel = 0; resetConfirmIdx = 0xFF; return;
+#if defined(BOARD_ESP32_32E)
+    case SET_TOUCHCAL:
+      halTouchCalibrate();
+      settingsOpen = false;
+      characterInvalidate();
+      if (buddyMode) buddyInvalidate();
+      return;
+#endif
+    case SET_BACK:  settingsOpen = false; characterInvalidate(); return;
   }
   settingsSave();
 }
@@ -263,7 +342,81 @@ static void drawMenuHints(const Palette& p, int mx, int mw, int hy,
   spr.fillTriangle(x, hy, x, hy + 6, x + 5, hy + 3, p.textDim);
 }
 
+#if defined(BOARD_ESP32_32E)
+// Touch-only: menus are a grid of big buttons filling the panel instead of
+// a list stepped through with A and picked with B. A tap picks a button,
+// a long press closes the menu.
+const int GRID_TOP = 20, GRID_GAP = 4;
+static void gridCell(uint8_t n, uint8_t i, int* x, int* y, int* w, int* h) {
+  int cols = n > 3 ? (W > 280 ? 3 : 2) : 1, rows = (n + cols - 1) / cols;
+  int cw = (W - (cols - 1) * GRID_GAP) / cols;
+  int ch = (H - GRID_TOP - (rows - 1) * GRID_GAP) / rows;
+  if (ch > 44) ch = 44;
+  *x = (i % cols) * (cw + GRID_GAP);
+  *y = GRID_TOP + (i / cols) * (ch + GRID_GAP);
+  *w = cw; *h = ch;
+}
+// Panel coordinates to item index, or -1 for a miss.
+static int gridHit(uint8_t n, int px, int py) {
+  for (uint8_t i = 0; i < n; i++) {
+    int x, y, w, h; gridCell(n, i, &x, &y, &w, &h);
+    if (px >= x && px < x + w && py >= y && py < y + h) return i;
+  }
+  return -1;
+}
+// values may be null; hot is an item to show armed ("really?").
+static void drawGrid(const char* title, const char* const* labels, char values[][8],
+                     uint8_t n, uint16_t border, int hot = -1) {
+  const Palette& p = characterPalette();
+  spr.fillRect(0, 0, W, H, PANEL);
+  spr.setTextFont(2); spr.setTextSize(1);
+  spr.setTextColor(p.text, PANEL);
+  spr.setTextDatum(TL_DATUM);
+  spr.drawString(title, 2, 0);
+  spr.setTextFont(1);
+  spr.setTextColor(p.textDim, PANEL);
+  spr.setTextDatum(TR_DATUM);
+  spr.drawString("hold: close", W - 2, 4);
+  for (uint8_t i = 0; i < n; i++) {
+    int x, y, w, h; gridCell(n, i, &x, &y, &w, &h);
+    bool armed = (int)i == hot;
+    spr.fillRoundRect(x, y, w, h, 5, 0x0000);
+    spr.drawRoundRect(x, y, w, h, 5, armed ? HOT : border);
+    bool hasVal = values && values[i][0];
+    spr.setTextDatum(MC_DATUM);
+    spr.setTextFont(2);
+    spr.setTextColor(armed ? HOT : p.text, 0x0000);
+    spr.drawString(armed ? "really?" : labels[i], x + w / 2, y + h / 2 - (hasVal ? 5 : 0));
+    if (hasVal) {
+      spr.setTextFont(1);
+      bool on = !strcmp(values[i], "on");
+      spr.setTextColor(on ? GREEN : p.textDim, 0x0000);
+      spr.drawString(values[i], x + w / 2, y + h / 2 + 9);
+    }
+  }
+  spr.setTextDatum(TL_DATUM);
+  spr.setTextFont(1);
+}
+#endif
+
 static void drawSettings() {
+#if defined(BOARD_ESP32_32E)
+  {
+    Settings& s = settings();
+    static char v[SETTINGS_N][8];
+    for (int i = 0; i < SETTINGS_N; i++) v[i][0] = 0;
+    snprintf(v[SET_BRIGHT], 8, "%u/4", brightLevel);
+    strcpy(v[SET_SOUND], s.sound ? "on" : "off");
+    strcpy(v[SET_FLASH], s.led ? "on" : "off");
+    strcpy(v[SET_HUD],   s.hud ? "on" : "off");
+    strcpy(v[SET_FLIP],  s.clockRot ? "on" : "off");
+    uint8_t total = buddySpeciesCount() + (gifAvailable ? 1 : 0);
+    uint8_t pos   = buddyMode ? buddySpeciesIdx() + 1 : total;
+    snprintf(v[SET_PET], 8, "%u/%u", pos, total);
+    drawGrid("Settings", settingsItems, v, SETTINGS_N, characterPalette().textDim);
+    return;
+  }
+#endif
   const Palette& p = characterPalette();
   int mw = 118, mh = 16 + SETTINGS_N * MENU_ROW + MENU_HINT_H;
   int mx = (W - mw) / 2, my = (H - mh) / 2;
@@ -298,6 +451,13 @@ static void drawSettings() {
 }
 
 static void drawReset() {
+#if defined(BOARD_ESP32_32E)
+  {
+    int hot = ((int32_t)(millis() - resetConfirmUntil) < 0) ? resetConfirmIdx : -1;
+    drawGrid("Reset", resetItems, nullptr, RESET_N, HOT, hot);
+    return;
+  }
+#endif
   const Palette& p = characterPalette();
   int mw = 118, mh = 16 + RESET_N * MENU_ROW + MENU_HINT_H;
   int mx = (W - mw) / 2, my = (H - mh) / 2;
@@ -335,6 +495,15 @@ void menuConfirm() {
 }
 
 void drawMenu() {
+#if defined(BOARD_ESP32_32E)
+  {
+    static char v[MENU_N][8];
+    for (int i = 0; i < MENU_N; i++) v[i][0] = 0;
+    strcpy(v[4], dataDemo() ? "on" : "off");
+    drawGrid("Menu", menuItems, v, MENU_N, characterPalette().textDim);
+    return;
+  }
+#endif
   const Palette& p = characterPalette();
   int mw = 118, mh = 16 + MENU_N * MENU_ROW + MENU_HINT_H;
   int mx = (W - mw) / 2, my = (H - mh) / 2;
@@ -383,9 +552,15 @@ static void drawClock() {
 
   spr.fillRect(0, 0, W, H, p.bg);
   spr.setTextDatum(MC_DATUM);
+#if defined(BOARD_WAVESHARE_349)
   spr.setTextSize(8); spr.setTextColor(p.text, p.bg);    spr.drawString(hm, CX - 24, 66);
   spr.setTextSize(3); spr.setTextColor(p.textDim, p.bg); spr.drawString(ss, CX + 150, 82);
   spr.setTextSize(2);                                     spr.drawString(dl, CX, 140);
+#else
+  spr.setTextSize(6); spr.setTextColor(p.text, p.bg);    spr.drawString(hm, CX, 50);
+  spr.setTextSize(3); spr.setTextColor(p.textDim, p.bg); spr.drawString(ss + 1, CX, 102);
+  spr.setTextSize(2);                                     spr.drawString(dl, CX, 146);
+#endif
   spr.setTextDatum(TL_DATUM);
   spr.setTextSize(1);
 }
@@ -469,14 +644,32 @@ void drawInfo() {
     ln("approvals pile up.");
     y += 6;
     spr.setTextColor(p.text, p.bg);
+#if defined(BOARD_WAVESHARE_349)
     ln("Press PWR or tap Approve on a");
     ln("prompt to approve from here.");
+#else
+    ln("Tap Approve or Deny on a");
+    ln("prompt to answer from here.");
+#endif
     y += 6;
     spr.setTextColor(p.textDim, p.bg);
     ln("18 species. Settings");
     ln("> ascii pet to cycle.");
 
   } else if (infoPage == 1) {
+#if defined(BOARD_ESP32_32E)
+    _infoHeader(p, y, "TOUCH", infoPage);
+    spr.setTextColor(p.text, p.bg);    ln("Tap the pet");
+    spr.setTextColor(p.textDim, p.bg); ln("    next screen"); y += 4;
+    spr.setTextColor(p.text, p.bg);    ln("Tap the panel");
+    spr.setTextColor(p.textDim, p.bg); ln("    next page; on the transcript,");
+    ln("    top half older, bottom newer"); y += 4;
+    spr.setTextColor(p.text, p.bg);    ln("Hold anywhere");
+    spr.setTextColor(p.textDim, p.bg); ln("    menu (tap a button to pick)"); y += 4;
+    spr.setTextColor(p.text, p.bg);    ln("Prompts");
+    spr.setTextColor(p.textDim, p.bg); ln("    tap Approve / Deny"); y += 4;
+    ln("Touch off? settings > touch cal");
+#else
     _infoHeader(p, y, "BUTTONS", infoPage);
     spr.setTextColor(p.text, p.bg);    ln("PWR (A, middle)");
     spr.setTextColor(p.textDim, p.bg); ln("    next screen / approve prompt");
@@ -487,6 +680,7 @@ void drawInfo() {
     spr.setTextColor(p.text, p.bg);    ln("Touch");
     spr.setTextColor(p.textDim, p.bg); ln("    tap pet = A, tap panel = B");
     ln("    prompts: tap Approve / Deny");
+#endif
 
   } else if (infoPage == 2) {
     _infoHeader(p, y, "CLAUDE", infoPage);
@@ -593,8 +787,13 @@ void drawInfo() {
     spr.setTextColor(p.textDim, p.bg);
     ln("hardware");
     y += 4;
+#if defined(BOARD_WAVESHARE_349)
     ln("Waveshare ESP32-S3");
     ln("Touch-LCD-3.49 (V2)");
+#else
+    ln("LCDwiki ESP32-32E");
+    ln("display");
+#endif
   }
 }
 
@@ -635,6 +834,17 @@ static uint8_t wrapInto(const char* in, char out[][WRAP_MAX + 2], uint8_t maxRow
 }
 
 // Approve / Deny touch targets along the bottom of the panel (panel coords).
+#if defined(BOARD_WAVESHARE_349)
+static const char* const APPROVE_LBL = "Approve (PWR)";
+static const char* const DENY_LBL    = "Deny (BOOT)";
+const uint8_t HINT_WRAP = WRAP_MAX;
+const int HINT_ROWS_MAX = 5;
+#else
+static const char* const APPROVE_LBL = "Approve";
+static const char* const DENY_LBL    = "Deny";
+const uint8_t HINT_WRAP = (W - 12) / 6;
+const int HINT_ROWS_MAX = 8;
+#endif
 const int BTN_H = 40, BTN_Y = H - BTN_H - 4;
 const int BTN_APPROVE_X = 4,         BTN_DENY_X = W / 2 + 4;
 const int BTN_W = W / 2 - 8;
@@ -656,15 +866,20 @@ static void drawApproval() {
   spr.setTextColor(p.text, p.bg);
   spr.setTextSize(ts);
   spr.setCursor(6, 20);
-  spr.printf("%.35s", tama.promptTool);
+  int toolMax = (W - 12) / (6 * ts);
+  if (toolMax > 35) toolMax = 35;
+  spr.printf("%.*s", toolMax, tama.promptTool);
   spr.setTextSize(1);
 
-  // Hint: wrapped to the panel width, up to 5 rows.
-  static char rows[5][WRAP_MAX + 2];
-  uint8_t n = wrapInto(tama.promptHint, rows, 5, WRAP_MAX);
+  // Hint: wrapped to the panel width, as many rows as fit above the buttons.
+  const int hintY = 20 + ts * 8 + 6;
+  int maxRows = (BTN_Y - 2 - hintY) / 10;
+  if (maxRows > HINT_ROWS_MAX) maxRows = HINT_ROWS_MAX;
+  static char rows[8][WRAP_MAX + 2];
+  uint8_t n = wrapInto(tama.promptHint, rows, maxRows, HINT_WRAP);
   spr.setTextColor(p.textDim, p.bg);
   for (uint8_t i = 0; i < n; i++) {
-    spr.setCursor(6, 20 + ts * 8 + 6 + i * 10);
+    spr.setCursor(6, hintY + i * 10);
     spr.print(rows[i]);
   }
 
@@ -676,10 +891,10 @@ static void drawApproval() {
   } else {
     spr.fillRoundRect(BTN_APPROVE_X, BTN_Y, BTN_W, BTN_H, 6, GREEN);
     spr.setTextColor(BLACK, GREEN);
-    spr.drawString("Approve (PWR)", BTN_APPROVE_X + BTN_W / 2, BTN_Y + BTN_H / 2);
+    spr.drawString(APPROVE_LBL, BTN_APPROVE_X + BTN_W / 2, BTN_Y + BTN_H / 2);
     spr.fillRoundRect(BTN_DENY_X, BTN_Y, BTN_W, BTN_H, 6, HOT);
     spr.setTextColor(BLACK, HOT);
-    spr.drawString("Deny (BOOT)", BTN_DENY_X + BTN_W / 2, BTN_Y + BTN_H / 2);
+    spr.drawString(DENY_LBL, BTN_DENY_X + BTN_W / 2, BTN_Y + BTN_H / 2);
   }
   spr.setTextDatum(TL_DATUM);
   spr.setTextSize(1);
@@ -774,13 +989,21 @@ static void drawPetHowTo(const Palette& p) {
   ln(p.textDim, " level up + confetti"); gap();
 
   ln(p.body,    "ENERGY");
+#if defined(BOARD_WAVESHARE_349)
   ln(p.textDim, " face-down to nap");
+#else
+  ln(p.textDim, " screen off 1min+ = nap");
+#endif
   ln(p.textDim, " refills to full"); gap();
 
   ln(p.textDim, "idle 30s on battery = screen off");
   ln(p.textDim, "any button or touch = wake"); gap();
 
+#if defined(BOARD_WAVESHARE_349)
   ln(p.textDim, "PWR: screens  BOOT: page  hold PWR: menu");
+#else
+  ln(p.textDim, "tap pet: screens  hold: menu");
+#endif
 }
 
 void drawPet() {
@@ -813,6 +1036,7 @@ static void drawDeskWaitBanner(int h) {
   spr.setTextColor(WHITE, bg);
   spr.setTextDatum(MC_DATUM);
   spr.setTextFont(4);
+  if (spr.textWidth("Approve on desktop") > W - 8) spr.setTextFont(2);
   spr.drawString("Approve on desktop", W / 2, H - h / 2 + 1);
   spr.setTextDatum(TL_DATUM);
   spr.setTextFont(2);
@@ -825,7 +1049,8 @@ void drawHUD() {
   // 16px font 2: about 8 rows of up to ~50 characters. Font 2 is
   // proportional, so 50 chars of normal text fits the 428px panel.
   const int HDR = 12;
-  const int LH = 17, WIDTH = 50;
+  // About 8.5px per character of font 2: 50 on the Waveshare, 26 on the 32E.
+  const int LH = 17, WIDTH = W * 2 / 17;
   // The desktop says a session is waiting but sent no prompt to answer
   // here (it only relays prompts for sessions it tracks). Show a big banner
   // at the bottom so it isn't missed, and keep the transcript above it.
@@ -838,8 +1063,13 @@ void drawHUD() {
   spr.setTextColor(p.textDim, p.bg);
   spr.setCursor(4, 1);
   if (tama.connected) {
+#if defined(BOARD_WAVESHARE_349)
     spr.printf("sessions %u   running %u   waiting %u", tama.sessionsTotal,
                tama.sessionsRunning, tama.sessionsWaiting);
+#else
+    spr.printf("sess %u  run %u  wait %u", tama.sessionsTotal,
+               tama.sessionsRunning, tama.sessionsWaiting);
+#endif
     if (tama.nLines && !deskWait) {
       spr.setCursor(W - 6 * 12, 1);
       spr.printf("%2u lines", tama.nLines);
@@ -972,8 +1202,38 @@ static void actionB(bool inPrompt) {
 
 void setup() {
   Serial.begin(115200);
+#if defined(BOARD_ESP32_32E)
+  // BLE only: hand the classic-BT controller memory back to the heap now,
+  // before anything else allocates. (BLEDevice::init does this too, but
+  // only after the heap has been carved up.)
+  esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+#endif
   halBegin();          // latches battery power, brings up panel, I2C, buttons
+#if defined(BOARD_WAVESHARE_349)
+  // 640x172x2 = 220KB: TFT_eSprite puts it in PSRAM.
+  if (!spr.createSprite(SCREEN_W, SCREEN_H)) {
+    Serial.println("FATAL: could not allocate the frame sprite (PSRAM enabled?)");
+  }
+#endif
   startBt();
+#if defined(BOARD_ESP32_32E)
+  // No PSRAM. Bluedroid needs its heap first (allocating the sprites before
+  // it crashed BLE start), then the frame sprites take what's left: pet
+  // 240x130 at 16 bits (61KB) if it fits, else 8 bits; panel 240x190 at
+  // 8 bits (45KB).
+  Serial.printf("ble up: heap free %u, largest block %u\n",
+                ESP.getFreeHeap(), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+  spr.setColorDepth(8);
+  if (!spr.createSprite(SCREEN_W, PANEL_SPR_H)) Serial.println("FATAL: no panel sprite");
+  petSpr.setColorDepth(16);
+  if (!petSpr.createSprite(PET_PANE_W, PET_PANE_H)) {
+    Serial.println("pet sprite: no room at 16 bits, trying 8");
+    petSpr.setColorDepth(8);
+    if (!petSpr.createSprite(PET_PANE_W, PET_PANE_H)) Serial.println("FATAL: no pet sprite");
+  }
+  Serial.printf("sprites: heap free %u, largest block %u\n",
+                ESP.getFreeHeap(), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+#endif
   statsLoad();
   settingsLoad();
   halSetFlip(settings().clockRot == 1);
@@ -982,10 +1242,6 @@ void setup() {
   lastInteractMs = millis();
 
   // BLE is always on.
-  // 640x172x2 = 220KB: TFT_eSprite puts it in PSRAM.
-  if (!spr.createSprite(SCREEN_W, SCREEN_H)) {
-    Serial.println("FATAL: could not allocate the frame sprite (PSRAM enabled?)");
-  }
   characterInit(nullptr);  // scan /characters/ for whatever is installed
   gifAvailable = characterLoaded();
   // species NVS: 0..N-1 = ASCII species, 0xFF = use GIF (also the default,
@@ -996,28 +1252,30 @@ void setup() {
 
   {
     const Palette& p = characterPalette();
+    petSpr.fillSprite(p.bg);
     spr.fillSprite(p.bg);
     spr.setTextDatum(MC_DATUM);
     spr.setTextSize(3);
     if (ownerName()[0]) {
       char line[40];
       snprintf(line, sizeof(line), "%s's", ownerName());
-      spr.setTextColor(p.text, p.bg);   spr.drawString(line, SCREEN_W/2, SCREEN_H/2 - 18);
-      spr.setTextColor(p.body, p.bg);   spr.drawString(petName(), SCREEN_W/2, SCREEN_H/2 + 18);
+      spr.setTextColor(p.text, p.bg);   spr.drawString(line, MSG_CX, MSG_CY - 18);
+      spr.setTextColor(p.body, p.bg);   spr.drawString(petName(), MSG_CX, MSG_CY + 18);
     } else {
       // First boot, no owner pushed yet — say hi.
-      spr.setTextColor(p.body, p.bg);   spr.drawString("Hello!", SCREEN_W/2, SCREEN_H/2 - 18);
+      spr.setTextColor(p.body, p.bg);   spr.drawString("Hello!", MSG_CX, MSG_CY - 18);
       spr.setTextSize(2);
       spr.setTextColor(p.textDim, p.bg);
-      spr.drawString("a buddy appears", SCREEN_W/2, SCREEN_H/2 + 20);
+      spr.drawString("a buddy appears", MSG_CX, MSG_CY + 20);
     }
     spr.setTextDatum(TL_DATUM); spr.setTextSize(1);
-    halPush(spr);
+    pushFrame();
     // Backlight only after the first real frame, so no power-on garbage.
     halScreenOn(true);
     applyBrightness();
     delay(1800);
     spr.fillSprite(p.bg);
+    petSpr.fillSprite(p.bg);
   }
 
   {
@@ -1032,9 +1290,10 @@ void setup() {
     int rr = (int)esp_reset_reason();
     Serial.printf("reset reason: %d (%s)\n", rr, rr < 13 ? RR[rr] : "?");
   }
-  Serial.printf("buddy: %s, imu %s, psram free %u\n",
+  Serial.printf("buddy: %s, imu %s, psram free %u, heap free %u (largest %u)\n",
                 buddyMode ? "ASCII mode" : "GIF character loaded",
-                halImuOk() ? "ok" : "missing", ESP.getFreePsram());
+                halImuOk() ? "ok" : "missing", ESP.getFreePsram(),
+                ESP.getFreeHeap(), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 }
 
 void loop() {
@@ -1114,18 +1373,20 @@ void loop() {
   if (BtnB.pressedFor(3000) && !btnBLong) {
     btnBLong = true;
     const Palette& p = characterPalette();
+    petSpr.fillSprite(p.bg);
     spr.fillSprite(p.bg);
     spr.setTextDatum(MC_DATUM); spr.setTextSize(3);
     spr.setTextColor(p.textDim, p.bg);
-    spr.drawString("bye!", SCREEN_W / 2, SCREEN_H / 2);
+    spr.drawString("bye!", MSG_CX, MSG_CY);
     spr.setTextDatum(TL_DATUM); spr.setTextSize(1);
-    halPush(spr);
+    pushFrame();
     delay(600);
     halPowerOff();
   }
 
-  if (BtnA.pressedFor(600) && !btnALong && !swallowBtnA) {
-    btnALong = true;
+  // Long press (A held, or a held touch on the 32E): open the menu, or
+  // back out of whichever menu is open.
+  auto longPress = [&]() {
     beep(800, 60);
     if (resetOpen) { resetOpen = false; }
     else if (settingsOpen) { settingsOpen = false; characterInvalidate(); }
@@ -1135,6 +1396,10 @@ void loop() {
       if (!menuOpen) characterInvalidate();
     }
     Serial.println(menuOpen ? "menu open" : "menu close");
+  };
+  if (BtnA.pressedFor(600) && !btnALong && !swallowBtnA) {
+    btnALong = true;
+    longPress();
   }
   if (BtnA.wasReleased()) {
     if (!btnALong && !swallowBtnA) actionA(inPrompt);
@@ -1149,10 +1414,60 @@ void loop() {
     swallowBtnB = false;
   }
 
+  int tx, ty;
+#if defined(BOARD_ESP32_32E)
+  // Touch-only. Any tap or hold wakes the screen (and is swallowed if it
+  // was off). Hold anywhere: menu. During a prompt only the Approve / Deny
+  // boxes respond. With a menu open, a tap picks a button and a tap on the
+  // pet closes it. Otherwise a tap on the pet is A (next screen) and a tap
+  // on the panel is B (next page), except on the transcript, where the top
+  // half scrolls back and the bottom half forward.
+  if (halTouchLongPressed()) {
+    bool wasOff = screenOff;
+    wake();
+    if (!wasOff && !inPrompt) longPress();
+  }
+  if (halTouchTapped(&tx, &ty)) {
+    bool wasOff = screenOff;
+    wake();
+    if (!wasOff) {
+      bool inPanel = ty >= PET_PANE_H;
+      int px = tx - PANEL_PAD_X, py = ty - PET_PANE_H - PANEL_TOP;   // panel coords
+      if (inPrompt) {
+        if (py >= BTN_Y && py < BTN_Y + BTN_H) {
+          if (px >= BTN_APPROVE_X && px < BTN_APPROVE_X + BTN_W) answerPrompt(true);
+          else if (px >= BTN_DENY_X && px < BTN_DENY_X + BTN_W) answerPrompt(false);
+        }
+      } else if (resetOpen || settingsOpen || menuOpen) {
+        if (!inPanel) {
+          beep(800, 60);
+          resetOpen = settingsOpen = menuOpen = false;
+          characterInvalidate();
+        } else {
+          uint8_t n = resetOpen ? RESET_N : settingsOpen ? SETTINGS_N : MENU_N;
+          int i = gridHit(n, px, py);
+          if (i >= 0) {
+            beep(2400, 30);
+            if (resetOpen)         { resetSel = i; applyReset(i); }
+            else if (settingsOpen) { settingsSel = i; applySetting(i); }
+            else                   { menuSel = i; menuConfirm(); }
+          }
+        }
+      } else if (!inPanel) {
+        actionA(false);
+      } else if (displayMode == DISP_NORMAL && settings().hud && !blePasskey()) {
+        beep(2400, 30);
+        if (py < H / 2) { if (msgScroll < 90) msgScroll++; }   // clamped in drawHUD
+        else if (msgScroll > 0) msgScroll--;
+      } else {
+        actionB(false);
+      }
+    }
+  }
+#else
   // Touch. Any tap wakes the screen (and is swallowed if it was off).
   // During a prompt only the Approve / Deny boxes respond. Otherwise a tap
   // on the pet acts like BOOT and a tap on the panel acts like PWR.
-  int tx, ty;
   if (halTouchTapped(&tx, &ty)) {
     bool wasOff = screenOff;
     wake();
@@ -1170,6 +1485,7 @@ void loop() {
       }
     }
   }
+#endif
 
   // Charging clock: takes over the panel when on USB power, no overlays,
   // no prompt, no live Claude data, and the RTC has been set by the bridge.
@@ -1219,24 +1535,24 @@ void loop() {
     characterTick();
   } else {
     const Palette& p = characterPalette();
-    spr.fillRect(0, 0, PET_PANE_W, SCREEN_H, p.bg);
-    spr.setTextColor(p.textDim, p.bg);
-    spr.setTextSize(1);
+    petSpr.fillRect(0, 0, PET_PANE_W, PET_PANE_H, p.bg);
+    petSpr.setTextColor(p.textDim, p.bg);
+    petSpr.setTextSize(1);
     if (xferActive()) {
       uint32_t done = xferProgress(), total = xferTotal();
-      spr.setCursor(8, 66);
-      spr.print("installing");
-      spr.setCursor(8, 78);
-      spr.printf("%luK / %luK", done/1024, total/1024);
+      petSpr.setCursor(8, 66);
+      petSpr.print("installing");
+      petSpr.setCursor(8, 78);
+      petSpr.printf("%luK / %luK", done/1024, total/1024);
       int barW = PET_PANE_W - 16;
-      spr.drawRect(8, 92, barW, 8, p.textDim);
+      petSpr.drawRect(8, 92, barW, 8, p.textDim);
       if (total > 0) {
         int fill = (int)((uint64_t)barW * done / total);
-        if (fill > 1) spr.fillRect(9, 93, fill - 1, 6, p.body);
+        if (fill > 1) petSpr.fillRect(9, 93, fill - 1, 6, p.body);
       }
     } else {
-      spr.setCursor(8, 80);
-      spr.print("no character loaded");
+      petSpr.setCursor(8, 80);
+      petSpr.print("no character loaded");
     }
   }
   panelEnd();
@@ -1257,14 +1573,18 @@ void loop() {
     panelEnd();
 
     // Divider between pet and panel
+#if defined(BOARD_WAVESHARE_349)
     spr.drawFastVLine(PET_PANE_W - 1, 8, SCREEN_H - 16, p.textDim);
+#else
+    spr.drawFastHLine(8, 1, SCREEN_W - 16, p.textDim);
+#endif
 
     // Stand-in for the M5's red LED: flash a border while a prompt waits.
     bool flashOn = activeState == P_ATTENTION && settings().led && (now / 400) % 2;
-    uint16_t fc = flashOn ? HOT : p.bg;
-    for (int i = 0; i < FLASH_PX; i++) spr.drawRect(i, i, SCREEN_W - 2 * i, SCREEN_H - 2 * i, fc);
+    drawFlashBorder(flashOn ? HOT : p.bg);
+    halLed(flashOn);
 
-    halPush(spr);
+    pushFrame();
   }
 
   // Face-down nap: dim immediately, pause animations, accumulate sleep time.
@@ -1299,6 +1619,7 @@ void loop() {
       && millis() - lastInteractMs > SCREEN_OFF_MS) {
     halScreenOn(false);
     screenOff = true;
+    screenOffAt = millis();
     Serial.printf("screen off: idle %lus on battery (vbat %dmV, usb guess %s)\n",
                   SCREEN_OFF_MS / 1000, halBatteryMv(), _onUsb ? "yes" : "no");
   }

@@ -4,7 +4,9 @@ Flash a prepped character pack via USB (pio run -t uploadfs).
 Faster than the BLE drop target when you're iterating on a character.
 
 Usage:
-  python3 tools/flash_character.py characters/bufo
+  python3 tools/flash_character.py characters/bufo [pio-env]
+
+pio-env defaults to waveshare-349-v2; use esp32-32e for the LCDwiki board.
 """
 import json, sys, shutil, subprocess
 from pathlib import Path
@@ -14,7 +16,7 @@ DATA    = PROJECT / "data" / "characters"
 CAP     = 1_800_000
 
 
-def flash(src: Path) -> None:
+def flash(src: Path, env: str) -> None:
     if not (src / "manifest.json").exists():
         sys.exit(f"no manifest.json in {src} — run tools/prep_character.py first")
     name = json.loads((src / "manifest.json").read_text())["name"]
@@ -31,11 +33,11 @@ def flash(src: Path) -> None:
     shutil.copytree(src, dst)
     print(f"staged {name}: {total:,} bytes -> {dst}")
 
-    subprocess.run(["pio", "run", "-t", "uploadfs"], cwd=PROJECT, check=True)
+    subprocess.run(["pio", "run", "-e", env, "-t", "uploadfs"], cwd=PROJECT, check=True)
     print(f"\nflashed. on the stick: hold A -> settings -> species -> GIF")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) not in (2, 3):
         sys.exit(__doc__)
-    flash(Path(sys.argv[1]).resolve())
+    flash(Path(sys.argv[1]).resolve(), sys.argv[2] if len(sys.argv) == 3 else "waveshare-349-v2")

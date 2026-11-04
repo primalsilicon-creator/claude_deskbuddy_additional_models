@@ -1,4 +1,6 @@
 #include "hal.h"
+#if defined(BOARD_WAVESHARE_349)
+// Waveshare ESP32-S3-Touch-LCD-3.49 (V2). See hal.h for the pin map.
 #include <Wire.h>
 #include <driver/spi_master.h>
 #include <esp_sleep.h>
@@ -506,3 +508,11 @@ void halUpdate() {
   BtnB.update();
   touchPoll();
 }
+
+// Taps fire on touch-down here, and long presses use the PWR button.
+bool halTouchLongPressed() { return false; }
+void halTouchCalibrate() {}        // capacitive: nothing to calibrate
+void halLed(bool) {}               // no LED on this board
+void halPushPet(TFT_eSprite&) {}   // the pet shares the main sprite
+
+#endif  // BOARD_WAVESHARE_349
