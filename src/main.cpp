@@ -1515,6 +1515,16 @@ void loop() {
         }
       } else if (!inPanel) {
         actionA(false);
+#if defined(SESSION_MODEL)
+      } else if (!blePasskey() && py < TAB_HIT_H && tabHit(px) >= 0) {
+        beep(1800, 30);
+        displayMode = tabHit(px);
+        applyDisplayMode();
+      } else if (displayMode == DISP_SESSION && !blePasskey()) {
+        beep(2400, 30);
+        if (py < H / 2) { if (sessionScroll < 90) sessionScroll++; }   // clamped in drawSession
+        else if (sessionScroll > 0) sessionScroll--;
+#endif
       } else if (displayMode == DISP_NORMAL && settings().hud && !blePasskey()) {
         beep(2400, 30);
         if (py < H / 2) { if (msgScroll < 90) msgScroll++; }   // clamped in drawHUD
@@ -1542,7 +1552,7 @@ void loop() {
         }
       } else if (tx < PET_PANE_W) {
         actionA(false);
-      } else if (!overlay && py < TAB_H + 6 && tabHit(px) >= 0) {
+      } else if (!overlay && py < TAB_HIT_H && tabHit(px) >= 0) {
         beep(1800, 30);
         displayMode = tabHit(px);
         applyDisplayMode();
@@ -1710,8 +1720,9 @@ void loop() {
   if (now - lastDiag > 5000) {
     lastDiag = now;
     float ax, ay, az; halAccel(&ax, &ay, &az);
-    Serial.printf("diag: vbat %dmV usb=%d accel %.2f %.2f %.2f screenOff=%d napping=%d\n",
-                  halBatteryMv(), _onUsb, ax, ay, az, screenOff, napping);
+    Serial.printf("diag: vbat %dmV usb=%d accel %.2f %.2f %.2f screenOff=%d napping=%d heap %u (max block %u)\n",
+                  halBatteryMv(), _onUsb, ax, ay, az, screenOff, napping,
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   }
 
   delay(screenOff ? 100 : 16);

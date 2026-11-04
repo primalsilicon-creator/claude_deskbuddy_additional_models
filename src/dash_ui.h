@@ -1,5 +1,6 @@
 #pragma once
-// Dashboard and session screens for the Waveshare 3.49 (428x158 panel).
+// Dashboard and session screens for the Waveshare 3.49 (428x158 panel) and
+// the landscape 2.8" ESP32-32E (308x134 panel, 8-bit colour, touch only).
 // Included once from main.cpp, after the shared drawing helpers, so it can
 // use spr, W, H, the palette, tama and the stats.
 //
@@ -11,10 +12,22 @@
 const int TAB_H = 12;
 const uint16_t DASH_YEL  = 0xFFE0;
 const uint16_t DASH_CYAN = 0x07FF;
+#if defined(BOARD_WAVESHARE_349)
 const uint16_t DASH_TILE = 0x10A2;   // tile background, a touch above black
+const int TAB_W = 62;
+const int TAB_HIT_H = TAB_H + 6;     // touch zone for the tab strip
+const bool DASH_WIDE = true;         // room for the tools list beside the chart
+#else
+// The panel sprite is 8-bit (RGB332): 0x10A2 would round down to black.
+const uint16_t DASH_TILE = 0x39E7;
+const int TAB_W = 52;
+// Resistive touch is coarse; the strip is drawn 12px tall but takes taps
+// down to 24px.
+const int TAB_HIT_H = 24;
+const bool DASH_WIDE = false;
+#endif
 
 static const char* const TAB_NAMES[] = { "dash", "session", "log", "pet", "info" };
-const int TAB_W = 62;
 uint8_t sessionScroll = 0;
 static uint16_t _lastFeedGen = 0;
 
@@ -100,11 +113,14 @@ static void dashTile(int x, int y, int w, int h, const char* label, const char* 
   spr.setTextFont(1); spr.setTextSize(1);
   spr.setTextColor(p.textDim, bg);
   spr.setCursor(x + 6, y + 4); spr.print(label);
+  int lw = spr.textWidth(label);
   spr.setTextFont(4);
+  bool big = spr.textWidth(value) <= w - 10 && h >= 42;
+  if (!big) spr.setTextFont(2);
   spr.setTextColor(valCol, bg);
-  dashFit(value, x + 6, y + 14, w - 10);
-  if (sub && *sub) {
-    spr.setTextFont(1);
+  dashFit(value, x + 6, big ? y + 14 : y + h - 19, w - 10);
+  spr.setTextFont(1);
+  if (sub && *sub && lw + spr.textWidth(sub) + 14 <= w) {
     spr.setTextColor(p.textDim, bg);
     int sw = spr.textWidth(sub);
     spr.setCursor(x + w - sw - 5, y + 4);
@@ -139,7 +155,7 @@ static void drawDash() {
   spr.setTextSize(1);   // the ASCII pet leaves it at 2
   drawTabs(DISP_DASH);
   char v[16], sub[24];
-  const int GAP = 4, TW = (W - 3 * GAP) / 4, TY = TAB_H + 3, TH = 46;
+  const int GAP = 4, TW = (W - 3 * GAP) / 4, TY = TAB_H + 3, TH = DASH_WIDE ? 46 : 40;
   bool live = tama.connected;
 
   // Row 1: four tiles
@@ -168,7 +184,9 @@ static void drawDash() {
   }
 
   // Row 2 left: output tokens per 5 minutes over the last 2 hours
-  const int R2 = TY + TH + 6, R2H = 48, CHART_W = 24 * 8;
+  const int R2 = TY + TH + (DASH_WIDE ? 6 : 4), R2H = DASH_WIDE ? 48 : 36;
+  const int BAR_PITCH = DASH_WIDE ? 8 : W / TOK_BUCKETS;   // full width on the 2.8"
+  const int CHART_W = TOK_BUCKETS * BAR_PITCH;
   uint32_t peak = 1;
   for (uint8_t i = 0; i < TOK_BUCKETS; i++) if (sessionTokBucket(i) > peak) peak = sessionTokBucket(i);
   spr.setTextFont(1);
@@ -182,25 +200,27 @@ static void drawDash() {
     uint32_t b = sessionTokBucket(TOK_BUCKETS - 1 - i);   // oldest on the left
     int bh = b ? (int)((uint64_t)b * BAR_H / peak) : 0;
     if (b && bh < 2) bh = 2;
-    if (bh) spr.fillRect(i * 8, BAR_TOP + BAR_H - bh, 6, bh, i == TOK_BUCKETS - 1 ? DASH_CYAN : p.body);
+    if (bh) spr.fillRect(i * BAR_PITCH, BAR_TOP + BAR_H - bh, BAR_PITCH - 2, bh,
+                         i == TOK_BUCKETS - 1 ? DASH_CYAN : p.body);
   }
 
-  // Row 2 right: most used tools
+  // Row 2 right: most used tools (on the 2.8" they go in the footer)
   const int TX = CHART_W + 14, TWID = W - TX;
   char hdr[40];
-  snprintf(hdr, sizeof(hdr), "tools  %u calls", m.toolCalls);
-  spr.setCursor(TX, R2); spr.print(hdr);
-  if (m.toolErrors) {
-    snprintf(hdr, sizeof(hdr), "%u err", m.toolErrors);
-    spr.setTextColor(HOT, p.bg);
-    spr.setCursor(W - spr.textWidth(hdr), R2); spr.print(hdr);
-  }
   uint8_t order[TOOL_CAP]; uint8_t nt = m.nTools;
   for (uint8_t i = 0; i < nt; i++) order[i] = i;
   for (uint8_t i = 1; i < nt; i++) {               // sort by count, descending
     uint8_t k = order[i]; int j = i - 1;
     while (j >= 0 && m.tools[order[j]].n < m.tools[k].n) { order[j + 1] = order[j]; j--; }
     order[j + 1] = k;
+  }
+  if (DASH_WIDE) {
+  snprintf(hdr, sizeof(hdr), "tools  %u calls", m.toolCalls);
+  spr.setCursor(TX, R2); spr.print(hdr);
+  if (m.toolErrors) {
+    snprintf(hdr, sizeof(hdr), "%u err", m.toolErrors);
+    spr.setTextColor(HOT, p.bg);
+    spr.setCursor(W - spr.textWidth(hdr), R2); spr.print(hdr);
   }
   uint16_t top = nt ? m.tools[order[0]].n : 1;
   for (uint8_t r = 0; r < 4 && r < nt; r++) {
@@ -215,10 +235,12 @@ static void drawDash() {
     spr.setCursor(W - spr.textWidth(c), y); spr.print(c);
   }
   if (!nt) { spr.setTextColor(p.textDim, p.bg); spr.setCursor(TX, R2 + 20); spr.print("no tool calls yet"); }
+  }
 
   // Row 3: what's happening now, or the approval banner
-  const int R3 = R2 + R2H + 4, R3H = H - R3;
-  if (fresh) { drawDashWait(R3, R3H); return; }
+  const int R3 = R2 + R2H + (DASH_WIDE ? 4 : 2), R3H = H - R3;
+  // The banner needs two lines of font 2; on the 2.8" it covers the chart too.
+  if (fresh) { if (R3H >= 38) drawDashWait(R3, R3H); else drawDashWait(R2, H - R2); return; }
 
   spr.drawFastHLine(0, R3 - 2, W, 0x4208);
   spr.setTextFont(2);
@@ -237,6 +259,14 @@ static void drawDash() {
   spr.setTextFont(1);
   spr.setTextColor(p.textDim, p.bg);
   char foot[120];
+  if (!DASH_WIDE) {
+    // Narrow: the footer lists the most used tools instead.
+    int n = snprintf(foot, sizeof(foot), nt ? "tools %u:" : "no tool calls yet", m.toolCalls);
+    for (uint8_t r = 0; r < nt && r < 4 && n < (int)sizeof(foot) - 24; r++)
+      n += snprintf(foot + n, sizeof(foot) - n, " %s %u", m.tools[order[r]].name, m.tools[order[r]].n);
+    dashFit(foot, 0, H - 9, W);
+    return;
+  }
   int n = snprintf(foot, sizeof(foot), "you %u  claude %u  turns %u", m.userMsgs, m.claudeMsgs, m.turnsDone);
   if (m.desktopApprovals)
     n += snprintf(foot + n, sizeof(foot) - n, "  desk ok %u (avg %lus)", m.desktopApprovals,

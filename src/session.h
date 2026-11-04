@@ -11,7 +11,9 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
-#if defined(BOARD_WAVESHARE_349)
+// Waveshare 3.49 and the landscape 2.8" ESP32-32E. The 2.8" has no PSRAM
+// and ~24KB free with BLE up, so it keeps a smaller feed.
+#if defined(BOARD_WAVESHARE_349) || (defined(BOARD_ESP32_32E) && defined(SCREEN_LANDSCAPE))
 #define SESSION_MODEL 1
 #endif
 
@@ -25,14 +27,24 @@ struct FeedItem {
   uint8_t  status;      // ToolStatus, for FK_TOOL
   uint32_t ms;          // millis() when it arrived
   uint32_t idHash;      // tool_use id hash, to match its tool_result
+#if defined(BOARD_WAVESHARE_349)
   char     name[24];    // tool name, or "you" / "claude"
   char     text[100];   // one line: message start, or the tool's main argument
+#else
+  char     name[20];
+  char     text[64];
+#endif
 };
 
 struct ToolCount { char name[24]; uint16_t n; };
 
+#if defined(BOARD_WAVESHARE_349)
 const uint8_t  FEED_CAP   = 40;
 const uint8_t  TOOL_CAP   = 12;
+#else
+const uint8_t  FEED_CAP   = 20;   // about 1.8KB of feed instead of 5.6KB
+const uint8_t  TOOL_CAP   = 8;
+#endif
 const uint8_t  TOK_BUCKETS = 24;           // 24 x 5 min = the last 2 hours
 const uint32_t TOK_BUCKET_MS = 5UL * 60 * 1000;
 
