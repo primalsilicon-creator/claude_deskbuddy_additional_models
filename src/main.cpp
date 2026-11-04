@@ -971,16 +971,20 @@ static void drawPetStats(const Palette& p) {
   spr.setCursor(11, y + 1); spr.printf("Lv %u", stats().level);
 
   y += 20;
+  // Short panels (the 2.8" at 134px) cut the last rows off, so the counters
+  // move into the empty right-hand column, under the pet's name.
+  int sx = 6;
+  if (H < 150) { sx = W / 2; y = 34; }
   spr.setTextColor(p.textDim, p.bg);
-  spr.setCursor(6, y);
+  spr.setCursor(sx, y);
   spr.printf("approved %u", stats().approvals);
-  spr.setCursor(6, y + 10);
+  spr.setCursor(sx, y + 10);
   spr.printf("denied   %u", stats().denials);
   uint32_t nap = stats().napSeconds;
-  spr.setCursor(6, y + 20);
+  spr.setCursor(sx, y + 20);
   spr.printf("napped   %luh%02lum", nap/3600, (nap/60)%60);
   auto tokFmt = [&](const char* label, uint32_t v, int yPx) {
-    spr.setCursor(6, yPx);
+    spr.setCursor(sx, yPx);
     if (v >= 1000000)   spr.printf("%s%lu.%luM", label, v/1000000, (v/100000)%10);
     else if (v >= 1000) spr.printf("%s%lu.%luK", label, v/1000, (v/100)%10);
     else                spr.printf("%s%lu", label, v);
