@@ -103,6 +103,10 @@ static void _applyJson(const char* line, TamaState* out) {
     return;
   }
 
+  // One-shot events ({"evt":"turn",...}) aren't heartbeats. Without this they
+  // fell through and cleared the pending prompt until the next heartbeat.
+  if (!doc["evt"].isNull()) { _lastLiveMs = millis(); return; }
+
   out->sessionsTotal     = doc["total"]     | out->sessionsTotal;
   out->sessionsRunning   = doc["running"]   | out->sessionsRunning;
   out->sessionsWaiting   = doc["waiting"]   | out->sessionsWaiting;
@@ -152,14 +156,6 @@ static void _applyJson(const char* line, TamaState* out) {
     strncpy(out->promptTool, pt  ? pt  : "", sizeof(out->promptTool)-1); out->promptTool[sizeof(out->promptTool)-1]=0;
     strncpy(out->promptHint, ph  ? ph  : "", sizeof(out->promptHint)-1); out->promptHint[sizeof(out->promptHint)-1]=0;
   } else {
-    if (out->sessionsWaiting) {
-      // Dump the raw line (minus the transcript) so we can see exactly what
-      // the desktop sent when it reports a wait without a prompt.
-      doc.remove("entries");
-      Serial.print("hb: waiting, no prompt: ");
-      serializeJson(doc, Serial);
-      Serial.println();
-    }
     out->promptId[0] = 0; out->promptTool[0] = 0; out->promptHint[0] = 0;
   }
   out->lastUpdated = millis();
