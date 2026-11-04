@@ -120,7 +120,7 @@ static void drawDashWait(int y, int h) {
   uint16_t bg = on ? HOT : 0x8000;
   spr.fillRoundRect(0, y, W, h, 6, bg);
   spr.setTextColor(WHITE, bg);
-  spr.setTextFont(2); spr.setTextSize(1);
+  spr.setTextFont(2); spr.setTextSize(1);   // (already set by callers; kept for safety)
   char waited[12]; dashFmtDur(waited, sizeof(waited), millis() - m.waitChangedMs);
   spr.setCursor(8, y + 3); spr.print("Approve on desktop");
   spr.setCursor(W - spr.textWidth(waited) - 8, y + 3); spr.print(waited);
@@ -136,6 +136,8 @@ static void drawDash() {
   const Palette& p = characterPalette();
   const SessionModel& m = session();
   spr.fillRect(0, 0, W, H, p.bg);
+  spr.setTextSize(1);   // the ASCII pet leaves it at 2
+  drawTabs(DISP_DASH);
   char v[16], sub[24];
   const int GAP = 4, TW = (W - 3 * GAP) / 4, TY = TAB_H + 3, TH = 46;
   bool live = tama.connected;
@@ -250,6 +252,8 @@ static void drawSession() {
   const Palette& p = characterPalette();
   const SessionModel& m = session();
   spr.fillRect(0, 0, W, H, p.bg);
+  spr.setTextSize(1);   // the ASCII pet leaves it at 2
+  drawTabs(DISP_SESSION);
   bool fresh = tama.connected && sessionFreshWait();
   const int BANNER = fresh ? 40 : 0;
   const int TOP = TAB_H + 2, LH = 17;
