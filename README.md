@@ -136,6 +136,8 @@ fun little hardware devices that integrate with Claude.
 > **Building your own device?** You don't need any of the code here. See
 > **[REFERENCE.md](REFERENCE.md)** for the wire protocol: Nordic UART
 > Service UUIDs, JSON schemas, and the folder push transport.
+> [docs/BLE-PROTOCOL-OBSERVED.md](docs/BLE-PROTOCOL-OBSERVED.md) records what
+> the desktop actually sends on the wire, and where that differs.
 
 As an example, we built a desk pet on ESP32 that lives off permission
 approvals and interaction with Claude. It sleeps when nothing's happening,
